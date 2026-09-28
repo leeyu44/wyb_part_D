@@ -59,6 +59,16 @@ uv run pytest tests/ -q                # 测试（含端到端冒烟）
 
 判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁）。
 
+## 安装（openKylin / Debian 系）
+
+```bash
+sudo dpkg -i memhall_0.1.0_all.deb     # 内置全部依赖 wheel，安装不联网
+memhall run -a mock -c /usr/share/memhall/cases/full -o /tmp/mh-demo
+dpkg -r memhall                         # 卸载干净（prerm 清 /usr/lib/memhall）
+```
+
+包构建在 openKylin 目标机上原生完成（`scripts/build_deb_vm.sh`：清华源拉依赖 wheel → 组装离线安装树 → dpkg-deb），保证 wheel ABI 与目标机 Python 精确匹配、可复现。
+
 ## 许可
 
 Apache-2.0（见 [LICENSE](LICENSE)）
