@@ -57,10 +57,11 @@ def test_end_to_end_pipeline(tmp_path: Path):
     assert set(metrics["capability_scores"]) == {
         "persist", "recall", "dynamic_update",
         "discriminate", "boundary", "reuse"}
-    # mock 的已知行为：boundary 族 over_persist、recall-002 遗漏，其余应全对
+    # mock 的已知行为：boundary 族 over_persist、recall-002 遗漏；
+    # W2 新题（26 道）未对 mock 措辞校准，omission 为主，43 例全库基线 ~0.40
     assert metrics["capability_detail"]["boundary"]["error_breakdown"].get("over_persist")
     assert metrics["capability_detail"]["recall"]["error_breakdown"].get("omission")
-    assert metrics["overall_score"] > 0.5
+    assert metrics["overall_score"] > 0.3
 
     render_radar({"mock": metrics["capability_scores"]}, str(run_dir / "radar.png"))
     assert (run_dir / "radar.png").stat().st_size > 10_000

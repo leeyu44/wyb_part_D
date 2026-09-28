@@ -59,6 +59,9 @@ def _norm(s: str) -> str:
 
 _ABSTAIN = re.compile(r"不记得|不知道|没提过|没有记录|没听说过|无法确认|不清楚")
 
+# 拒答类键名约定：出题人在 verdict_map 里显式声明拒答如何判
+_REFUSAL_KEYS = {"abstain", "refused", "forgot"}
+
 
 class ScriptedJudge:
     """离线脚本判卷：expect 匹配 + 锚例匹配 + 拒答关键词，全程确定性。
@@ -92,6 +95,9 @@ class ScriptedJudge:
                 # 拒答题（expect 为空）：拒答本身就是正确行为
                 abstain_keys = [k for k, v in probe.verdict_map.items()
                                 if v == "correct"]
+            if not abstain_keys:
+                # verdict_map 显式声明了拒答类键：按作者口径判（expect 填了注释文案的新题走这）
+                abstain_keys = [k for k in probe.verdict_map if k in _REFUSAL_KEYS]
             if abstain_keys:
                 return JudgeOutcome(abstain_keys[0], 0.8, refs, "回答为拒答话术")
         return JudgeOutcome(None, 0.0, refs, "脚本判卷无法判定，需 LLM judge 或人工复核")
