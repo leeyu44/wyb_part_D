@@ -69,6 +69,16 @@ dpkg -r memhall                         # 卸载干净（prerm 清 /usr/lib/memh
 
 包构建在 openKylin 目标机上原生完成（`scripts/build_deb_vm.sh`：清华源拉依赖 wheel → 组装离线安装树 → dpkg-deb），保证 wheel ABI 与目标机 Python 精确匹配、可复现。
 
+## 平台支持
+
+| 平台 | 支持度 | 说明 |
+|---|---|---|
+| Windows | ✅ 原生 | 开发与评测主战场：被测智能体经 SSH 驱动 VM，宿主 OS 无关；CLI 已做 UTF-8 控制台适配 |
+| WSL | ✅ | 能跑（纯 Python + pip 依赖），但无增益——评测目标在 VM，多一层反而慢 |
+| openKylin / Debian 系 | ✅ .deb | 见上节，离线安装 |
+
+功能影响：六维评测、双智能体判卷、雷达图、报告全链路平台无关；平台差异仅在安装方式（uv/pip vs .deb）与控制台编码。
+
 ## 许可
 
 Apache-2.0（见 [LICENSE](LICENSE)）

@@ -119,7 +119,18 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _utf8_console() -> None:
+    """Windows 控制台默认 GBK 代码页，中文输出乱码——统一改 UTF-8。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream.encoding and stream.encoding.lower() not in ("utf-8", "utf8"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except AttributeError:
+                pass  # 非 TextIOWrapper（重定向到文件等）时不动
+
+
 def main() -> None:
+    _utf8_console()
     parser = argparse.ArgumentParser(prog="memhall",
                                      description="麟阁：智能体记忆能力评测基准")
     sub = parser.add_subparsers(dest="command", required=True)
