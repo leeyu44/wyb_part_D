@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -32,7 +33,10 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# 打包成 exe 时（onedir）源码树不存在：cases/runs/.env 都落在 exe 同级目录
+REPO_ROOT = (Path(sys.executable).resolve().parent
+             if getattr(sys, "frozen", False)
+             else Path(__file__).resolve().parents[3])
 ENV_PATH = REPO_ROOT / ".env"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

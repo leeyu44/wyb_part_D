@@ -139,17 +139,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 def cmd_ui(args: argparse.Namespace) -> int:
     from pathlib import Path as _P
-    _env_file = _P(__file__).resolve().parents[2] / ".env"
+    _env_file = (_P(sys.executable).resolve().parent / ".env"
+                 if getattr(sys, "frozen", False)
+                 else _P(__file__).resolve().parents[2] / ".env")
     if _env_file.exists():  # UI 进程不吃手工 source，自动装 .env
         for line in _env_file.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
-    import threading
-    import webbrowser
     from memhall.ui.app import create_app
     app = create_app()
+    if args.window:
+        return _run_window(app)
+    import threading
+    import webbrowser
     url = f"http://127.0.0.1:{args.port}/"
     if not args.no_open:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
@@ -159,8 +163,65 @@ def cmd_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_window(app) -> int:
+    """原生窗口壳：优先 pywebview（真原生窗口+任务栏图标）；打包环境缺
+    pythonnet/WebView2 时退 Edge 应用模式窗口（无地址栏，观感接近原生）。"""
+    import shutil
+    import socket
+    import subprocess
+    import threading
+    import time
+    import urllib.request
+
+    import uvicorn
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning"))
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{port}/"
+    for _ in range(50):  # 等服务就绪再开窗，避免白屏
+        try:
+            urllib.request.urlopen(f"{url}api/meta", timeout=1).read()
+            break
+        except OSError:
+            time.sleep(0.2)
+    try:
+        import webview
+        webview.create_window("麟阁 MemHall · 智能体记忆评测", url,
+                              width=1280, height=880, min_size=(980, 640))
+        webview.start()
+        return 0
+    except Exception:
+        pass
+    _open_app_window(url)
+    t.join()
+    return 0
+
+
+def _open_app_window(url: str) -> None:
+    """Edge/Chrome 的 --app 窗口（无地址栏）；都没有则普通浏览器。"""
+    import os
+    import webbrowser
+
+    cands = [shutil.which("msedge"), shutil.which("chrome"),
+             os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+             os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe")]
+    for path in cands:
+        if path and os.path.isfile(path):
+            import subprocess
+            subprocess.Popen([path, f"--app={url}"])
+            return
+    webbrowser.open(url)
+
+
 def main() -> None:
     _utf8_console()
+    if len(sys.argv) == 1 and getattr(sys, "frozen", False):
+        sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
     parser = argparse.ArgumentParser(prog="memhall",
                                      description="麟阁：智能体记忆能力评测基准")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -186,6 +247,8 @@ def main() -> None:
     p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）")
     p_ui.add_argument("--port", type=int, default=8300, help="端口（默认 8300）")
     p_ui.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+    p_ui.add_argument("--window", action="store_true",
+                      help="原生窗口模式（pywebview，exe 双击默认）")
     p_ui.set_defaults(func=cmd_ui)
 
     args = parser.parse_args()
