@@ -80,12 +80,10 @@ def create_app() -> FastAPI:
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
-    @app.get("/static/{name}")
+    @app.get("/static/{name:path}")
     def static_file(name: str) -> FileResponse:
-        if ".." in name or "/" in name or "\\" in name:
-            raise HTTPException(400, "非法路径")
-        p = STATIC_DIR / name
-        if not p.is_file():
+        p = (STATIC_DIR / name).resolve()
+        if not str(p).startswith(str(STATIC_DIR.resolve())) or not p.is_file():
             raise HTTPException(404, "not found")
         return FileResponse(p)
 
