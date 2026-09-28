@@ -18,7 +18,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from memhall.adapters.base import AgentAdapter
+from memhall.adapters.base import AgentAdapter, AgentUnavailable
 from memhall.adapters.remote import SshChannel, b64, elapsed_ms, now_utc
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
@@ -67,7 +67,9 @@ class HermesAdapter(AgentAdapter):
         rc, out, _ = self.ch.run(cmd, timeout=300)
         text = _strip_tui(out)
         if rc != 0 and not text:
-            raise RuntimeError(f"hermes 调用失败({rc})，原始输出被 TUI 噪声吞没")
+            raise AgentUnavailable(f"hermes 调用失败({rc})")
+        if "API failed after" in text or "Final error" in text:
+            raise AgentUnavailable(f"hermes 后端不可用: {text[:200]}")
         return Reply(session_id=session_id, text=text,
                      sent_at=sent, reply_at=now_utc(),
                      latency_ms=elapsed_ms(t0), token_usage=None)
@@ -167,9 +169,11 @@ def _strip_tui(out: str) -> str:
         i += 1
     if blocks:
         return "\n".join(blocks)
+    # 无框退化路径：滤 TUI 状态行（API 重试/加载提示）与噪声头
     noise = ("Query:", "Initializing", "⚠", "⏳", "❌", "Session:", "Resume", "Duration",
-             "Title:", "Messages:")
+             "Title:", "Messages:", "🔁", "💀", "Transient", "Retrying", "rebuilt client",
+             "Provider said", "API failed")
     keep = [ln.rstrip() for ln in lines
             if ln.strip() and not any(n in ln for n in noise)
-            and not set(ln.strip()) & set("╭╮╰╯│┌┐└┘")]
+            and not set(ln.strip()) & set("╭╮╰╯│┌┐└┘─")]
     return "\n".join(keep).strip()

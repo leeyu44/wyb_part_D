@@ -55,6 +55,14 @@ def _raw_verdict(key: str | None, probe: JudgeProbe) -> VerdictValue:
 def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: int,
                    judges: Optional[tuple[OpenAICompatJudge, ...]]) -> Verdict:
     answer = _answer_for(store, probe.ask)
+    if "[RUNTIME_ERROR]" in answer:
+        return Verdict(
+            verdict_id=f"v-{seq:04d}", probe_id=probe.id,
+            case_id=probe.id.rsplit("-", 1)[0], run_id=run_id,
+            verdict=VerdictValue.INVALID_RUN, confidence=0.0,
+            decided_by=DecidedBy.RULE, evidence_refs=["transcript:answer"],
+            explanation="运行无效：被测智能体后端不可用，不计入分母",
+        )
     outcome: JudgeOutcome
     decided_by: DecidedBy
 

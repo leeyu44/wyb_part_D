@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memhall.adapters.base import AgentAdapter
+from memhall.adapters.base import AdapterError
 from memhall.schema.evidence import (
     ActionDump,
     Evidence,
@@ -84,7 +85,18 @@ class CaseRunner:
                     text = step.user if step.user is not None else step.task
                     assert text is not None
                     messages.append(text)
-                    replies.append(self.adapter.send(session_id, text))
+                    try:
+                        replies.append(self.adapter.send(session_id, text))
+                    except AdapterError as e:
+                        # 契约 01：适配器不可用 -> 后续步骤无意义，case 标运行无效
+                        replies.append(Reply(
+                            session_id=session_id,
+                            text=f"[RUNTIME_ERROR] {e}",
+                            sent_at=_utc(), reply_at=_utc(), latency_ms=0))
+                        self._runtime_error = str(e)
+                        break
+                if getattr(self, "_runtime_error", None):
+                    break
                 self._collect(phase.name, EvidenceType.DIALOGUE,
                               {"messages": messages,
                                "replies": [r.model_dump(mode="json") for r in replies]})
