@@ -81,6 +81,7 @@ LOCAL_AGENTS: list[tuple[str, list[str], list[str], str]] = [
     ("goose", ["goose"], ["~/.config/goose"], ""),
     ("crush", ["crush"], ["~/.config/crush"], ""),
     ("hermes", ["hermes"], ["~/.hermes"], "hermes"),
+    ("kylin-bot", ["kylin-bot"], ["~/.kylinbot"], "kylinbot"),
     # --- IDE / 编辑器内智能体 ---
     ("cline", ["cline"], ["~/.cline"], ""),
     ("kilocode", ["kilocode"], ["~/.kilocode"], ""),
@@ -172,10 +173,10 @@ def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
             return hit.get("version", "")
         try:
             r = subprocess.run([exe, "--version"], capture_output=True,
-                               text=True, timeout=timeout_s)
+                               encoding="utf-8", errors="replace", timeout=timeout_s)
             ver = ((r.stdout or r.stderr).strip().splitlines()[0][:40]
                    if (r.stdout or r.stderr).strip() else "")
-        except (OSError, subprocess.TimeoutExpired, IndexError):
+        except Exception:  # 超时/编码崩溃/找不到一律降级为"无版本"，不让体检崩
             ver = ""
         versions_cache[exe] = {"version": ver, "ts": time.time()}
         return ver

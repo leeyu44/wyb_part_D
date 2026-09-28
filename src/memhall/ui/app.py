@@ -7,6 +7,8 @@
 - GET  /                     单页界面（static/index.html）
 - GET  /api/doctor           三路体检（结构化 JSON）
 - GET  /api/case-dirs        可选用例目录
+- GET  /api/agents           智能体注册表名单（体检扫描动画素材）
+- GET  /api/meta             服务端版本信息（页面据此自检新旧）
 - POST /api/start            开始一轮评测（后台线程跑，SSE 推进度）
 - GET  /api/events           SSE 进度流（case/done/stopped/error）
 - POST /api/stop             请求停止（当前用例跑完后生效）
@@ -100,24 +102,49 @@ def create_app() -> FastAPI:
             "usable": rep.usable_adapters(),
         }
 
-    # 分段端点：前端并行拉取，逐段点亮（体检总时长≈最慢一段而非三段之和）
+    # 分段端点：前端并行拉取，逐段点亮（体检总时长≈最慢一段而非三段之和）。
+    # 异常也回结构化 JSON（而非裸 500），让前端能展示具体原因。
     @app.get("/api/doctor/local")
     async def doctor_local(fresh: bool = False) -> dict:
         from memhall.discovery import scan_local
-        rep = await asyncio.to_thread(scan_local, 4, fresh)
+        try:
+            rep = await asyncio.to_thread(scan_local, 4, fresh)
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"[:300]}
         return {"local": [asdict(f) for f in rep]}
 
     @app.get("/api/doctor/vm")
     async def doctor_vm() -> dict:
         from memhall.discovery import scan_vm
-        vm, err = await asyncio.to_thread(scan_vm)
+        try:
+            vm, err = await asyncio.to_thread(scan_vm)
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"[:300]}
         return {"vm": [asdict(f) for f in vm], "vm_error": err}
 
     @app.get("/api/doctor/env")
     async def doctor_env() -> dict:
         from memhall.discovery import check_env
-        env = await asyncio.to_thread(check_env)
+        try:
+            env = await asyncio.to_thread(check_env)
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"[:300]}
         return {"env": [asdict(c) for c in env]}
+
+    @app.get("/api/agents")
+    def agent_catalog() -> dict:
+        from memhall.discovery import LOCAL_AGENTS
+        return {"names": [a[0] for a in LOCAL_AGENTS]}
+
+    @app.get("/api/meta")
+    def meta() -> dict:
+        import sys
+        from importlib.metadata import PackageNotFoundError, version
+        try:
+            v = version("memhall")
+        except PackageNotFoundError:
+            v = "dev"
+        return {"version": v, "python": sys.version.split()[0]}
 
     # ---------- 用例目录 ----------
     @app.get("/api/case-dirs")

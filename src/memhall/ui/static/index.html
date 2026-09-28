@@ -214,6 +214,56 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
   border-top-color:var(--acc);border-radius:50%;animation:rot .8s linear infinite;
   vertical-align:-2px}
 @keyframes rot{to{transform:rotate(360deg)}}
+/* ---- 扫描舱（体检页）：雷达 / SSH 链路 / LED 打点 ---- */
+.scanrig{display:flex;align-items:center;gap:18px;min-height:96px;grid-column:1/-1;padding:14px 2px}
+.radar{width:64px;height:64px;border-radius:50%;position:relative;flex:none;
+  background:var(--acc-soft);border:1px solid var(--acc-line);overflow:hidden}
+.radar .beam{position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 0deg,rgba(55,144,250,.45),rgba(55,144,250,.12) 55deg,transparent 72deg);
+  animation:sweep 1.5s linear infinite}
+.radar .ring{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;
+  border:1.5px solid var(--acc);opacity:0;transform:translate(-50%,-50%);
+  animation:ping 1.6s ease-out infinite}
+.radar .ring.r2{animation-delay:.8s}
+.radar .core{position:absolute;left:50%;top:50%;width:7px;height:7px;border-radius:50%;
+  background:var(--acc);transform:translate(-50%,-50%);animation:corepulse 1.6s ease-in-out infinite}
+@keyframes sweep{to{transform:rotate(360deg)}}
+@keyframes ping{0%{width:0;height:0;opacity:.5}70%{opacity:.12}100%{width:96%;height:96%;opacity:0}}
+@keyframes corepulse{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-50%) scale(1.5)}}
+.scaninfo{min-width:0;flex:1}
+.scanline{font-size:13.5px;color:var(--ink)}
+.scanline b{color:var(--acc-ink);font-weight:600}
+.ticker{margin-top:5px;font-family:var(--mono);font-size:12.5px;color:var(--sub);
+  height:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ticker .cur{display:inline-block}
+.scanbar{height:3px;border-radius:99px;margin-top:10px;max-width:300px;overflow:hidden;
+  background:var(--line-soft);position:relative}
+.scanbar i{position:absolute;top:0;bottom:0;width:38%;border-radius:99px;background:var(--acc);
+  animation:slide 1.2s ease-in-out infinite}
+@keyframes slide{0%{left:-40%}100%{left:105%}}
+.wire{display:flex;align-items:center;width:170px;flex:none}
+.wire .node{width:10px;height:10px;border-radius:50%;background:var(--acc);flex:none;
+  box-shadow:0 0 0 4px var(--acc-soft)}
+.wire .path{flex:1;height:2px;background:var(--acc-line);position:relative;overflow:hidden;margin:0 7px}
+.wire .pkt{position:absolute;top:-1.5px;width:5px;height:5px;border-radius:50%;
+  background:var(--acc-ink);animation:travel 1.4s linear infinite}
+.wire .pkt.p2{animation-delay:.47s}.wire .pkt.p3{animation-delay:.93s}
+@keyframes travel{0%{left:-8px}100%{left:calc(100% + 3px)}}
+.leds{display:flex;gap:7px;flex:none;padding:0 6px}
+.leds i{width:9px;height:9px;border-radius:50%;background:var(--acc);animation:led 1.2s ease-in-out infinite}
+.leds i:nth-child(2){animation-delay:.15s}.leds i:nth-child(3){animation-delay:.3s}
+@keyframes led{0%,100%{opacity:.25;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+.mini{position:relative;overflow:hidden}
+.mini .shine{position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:linear-gradient(105deg,transparent 42%,rgba(55,144,250,.2) 50%,transparent 58%)}
+.found-badge{display:inline-flex;align-items:baseline;gap:4px;margin-left:10px;
+  font-family:var(--serif);font-size:15px;font-weight:700;color:var(--acc-ink)}
+.found-badge small{font-family:var(--sans);font-size:11.5px;font-weight:500;color:var(--sub)}
+#docRefresh.scanning{position:relative;overflow:hidden;color:var(--acc-ink);pointer-events:none}
+#docRefresh.scanning::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 30%,var(--acc-soft) 50%,transparent 70%);
+  animation:shimmer 1.1s linear infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 </style>
 </head>
 <body>
@@ -330,7 +380,7 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
       </div>
     </section>
   </main>
-  <footer>麟阁 MemHall · 本地服务 127.0.0.1 · 证据可下钻</footer>
+  <footer>麟阁 MemHall · 本地服务 127.0.0.1 · 证据可下钻 · <span id="ftVer" class="mono"></span></footer>
 </div>
 <div id="evOverlay" class="ev-overlay">
   <div class="ev-card" id="evCard">
@@ -410,9 +460,17 @@ function switchTab(name){
 $$("#nav button").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
 
 /* ---------- 体检 ---------- */
-let doctorLoaded=false;
+let doctorLoaded=false,agentNames=null;
+const FALLBACK_NAMES=["claude-code","codex","dsh","gemini-cli","opencode","qwen-code","qwenpaw",
+  "zcode","pi","grok-build","workbuddy","aider","goose","crush","kylin-bot","hermes","cline",
+  "kilocode","copilot","continue","lingma","codebuddy","trae","marscode","cherry-studio",
+  "kimi","ollama","lm-studio","modelscope","cc-switch","clawd"];
+async function loadAgentNames(){
+  if(agentNames)return;
+  try{agentNames=(await api("/api/agents")).names;}catch{agentNames=FALLBACK_NAMES;}
+}
 const cardRow=(f)=>`
-  <div class="mini ${f.found?"":"ghost"}">
+  <div class="mini ${f.found?"":"ghost"}">${f.found?'<i class="shine"></i>':""}
     <div class="name"><span class="dot ${f.found?"y":"n"}"></span>${esc(f.name)}
       ${f.adapter?`<span class="tag">-a ${esc(f.adapter)}</span>`:
         f.found?`<span class="tag">可定制</span>`:""}</div>
@@ -422,12 +480,34 @@ const envRow=(c)=>`
   <div class="envrow"><span class="n">${esc(c.name)}</span>
     <span class="pill ${c.ok?"ok":"warn"}">${c.ok?"通过":"未就绪"}</span>
     <span class="d">${esc(c.detail||"")}</span></div>`;
-function secPending(){return '<div class="empty"><span class="spin"></span> 探测中…</div>';}
-function renderFoundList(box,found){
-  box.innerHTML=found.map(cardRow).join("");
-  staggerIn(box.querySelectorAll(".mini"),{y:12,stagger:.035});
+function scanRig(kind,label){
+  const glyph=kind==="local"
+    ?'<div class="radar"><i class="beam"></i><i class="ring"></i><i class="ring r2"></i><b class="core"></b></div>'
+    :kind==="vm"
+    ?'<div class="wire"><i class="node"></i><span class="path"><i class="pkt"></i><i class="pkt p2"></i><i class="pkt p3"></i></span><i class="node"></i></div>'
+    :'<div class="leds"><i></i><i></i><i></i></div>';
+  return `<div class="scanrig">${glyph}<div class="scaninfo">
+    <div class="scanline">${label}</div>
+    <div class="ticker"><span class="cur"></span></div>
+    <div class="scanbar"><i></i></div></div></div>`;
+}
+function startTicker(box,kind){
+  const envNames=["LLM 网关","SSH 通道","密钥配置"];
+  let i=0;
+  const tick=()=>{
+    const names=agentNames||FALLBACK_NAMES;
+    i=(i+1)%names.length;
+    const t=box.querySelector(".cur");if(!t)return;
+    t.textContent=kind==="local"?`which ${names[i]} · ${names[i]} --version`
+      :kind==="vm"?`ssh 评测机 · 探测 ${names[i]}`
+      :`检查 ${envNames[i%3]}…`;
+    if(G){G.fromTo(t,{y:9,opacity:0},{y:0,opacity:1,duration:.16,ease:"power1.out",overwrite:true});}
+  };
+  tick();
+  return setInterval(tick,430);
 }
 function renderNotFoundWrap(box,missed){
+  if(!missed.length){box.innerHTML="";return}
   box.innerHTML=`<details style="margin-top:8px"><summary style="cursor:pointer;
     color:var(--faint);font-size:12.5px;user-select:none">未检出 ${missed.length} 项（点击展开名单）</summary>
     <div style="margin-top:8px;color:var(--faint);font-size:12px;line-height:2">${missed.map(esc).join(" · ")}</div></details>`;
@@ -435,46 +515,93 @@ function renderNotFoundWrap(box,missed){
 async function loadDoctor(fresh=false){
   const body=$("#docBody");
   doctorLoaded=true;
+  loadAgentNames();
+  const btn=$("#docRefresh");btn.disabled=true;btn.classList.add("scanning");
   body.innerHTML=`
-    <h2.sec>本机智能体</h2><div class="grid-cards" id="dgLocal">${secPending()}</div>
-    <h2.sec>评测机智能体（openKylin VM）</h2><div class="grid-cards" id="dgVm">${secPending()}</div>
-    <h2.sec>评测环境就绪度</h2><div id="dgEnv">${secPending()}</div>
+    <h2.sec>本机智能体<span class="found-badge" id="nLocal" style="display:none"><b>0</b><small>个在册</small></span></h2>
+    <div class="grid-cards" id="dgLocal"></div><div id="dgMissed"></div>
+    <h2.sec>评测机智能体（openKylin VM）<span class="found-badge" id="nVm" style="display:none"><b>0</b><small>个在册</small></span></h2>
+    <div class="grid-cards" id="dgVm"></div>
+    <h2.sec>评测环境就绪度</h2><div id="dgEnv"></div>
     <div class="actionbar" id="dgBar" style="display:none">
       <span class="hint" id="dgHint"></span>
       <button class="ghostbtn" id="docGoRun" style="color:var(--acc-ink);border-color:var(--acc-line)">开始评测 →</button>
     </div>`;
+  const secs={local:$("#dgLocal"),vm:$("#dgVm"),env:$("#dgEnv")};
+  for(const[k,el]of Object.entries(secs)){
+    el.innerHTML=scanRig(k,
+      k==="local"?'正在扫描本机 <b>PATH · 配置目录 · 版本号</b>'
+      :k==="vm"?'正在 <b>SSH</b> 探测评测机（openKylin VM）'
+      :'正在检查 <b>网关 · SSH · 密钥</b> 就绪度');
+    el._tick=startTicker(el,k);
+  }
+  const stopTick=k=>{const el=secs[k];if(el&&el._tick){clearInterval(el._tick);el._tick=null;}};
   const results={};
   const done=async(key,promise,render)=>{
     try{results[key]=await promise;render(results[key]);}
-    catch(e){render({error:e.message});}
+    catch(e){
+      const msg=e.status===404
+        ?"接口 404——服务端进程还是旧代码而页面已是新版，重启 memhall ui（Ctrl+C 后重新运行）即可"
+        :e.message;
+      try{render({error:msg});}catch{}
+    }
+  };
+  const badge=(id,n)=>{
+    const b=$(id);if(!b)return;
+    b.style.display="inline-flex";
+    const num=b.querySelector("b");
+    if(!G){num.textContent=n;return}
+    G.fromTo(b,{scale:.4,opacity:0,rotate:-8},{scale:1,opacity:1,rotate:0,duration:.5,ease:"back.out(2.2)"});
+    countUp(num,n,v=>String(Math.round(v)));
+  };
+  const revealCards=(box)=>{
+    if(!G)return;
+    G.from(box.querySelectorAll(".mini"),{y:16,opacity:0,scale:.94,duration:.4,ease:"back.out(1.5)",stagger:.04});
+    G.fromTo(box.querySelectorAll(".mini .shine"),{xPercent:-130,opacity:1},
+      {xPercent:260,duration:.65,ease:"power1.inOut",stagger:.045,delay:.18});
+    G.fromTo(box.querySelectorAll(".dot.y"),{scale:0},
+      {scale:1,duration:.55,ease:"elastic.out(1,.45)",stagger:.045,delay:.12});
   };
   const pLocal=done("local",api(`/api/doctor/local${fresh?"?fresh=1":""}`),(d)=>{
-    const box=$("#dgLocal");
+    const box=$("#dgLocal");stopTick("local");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
     const found=d.local.filter(f=>f.found),missed=d.local.filter(f=>!f.found);
-    renderFoundList(box,found);
-    const wrap=document.createElement("div");wrap.id="dgMissed";
-    box.parentElement.insertBefore(wrap,box.nextSibling);
-    renderNotFoundWrap(wrap,missed.map(f=>f.name));});
+    badge("#nLocal",found.length);
+    box.innerHTML=found.map(cardRow).join("");
+    revealCards(box);
+    renderNotFoundWrap($("#dgMissed"),missed.map(f=>f.name));});
   const pVm=done("vm",api("/api/doctor/vm"),(d)=>{
-    const box=$("#dgVm");
+    const box=$("#dgVm");stopTick("vm");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
     if(d.vm_error){box.innerHTML=`<div class="empty">${esc(d.vm_error)}</div>`;return}
-    renderFoundList(box,d.vm);});
+    if(!d.vm.length){box.innerHTML='<div class="empty">评测机未发现智能体</div>';return}
+    badge("#nVm",d.vm.length);
+    box.innerHTML=d.vm.map(cardRow).join("");
+    revealCards(box);});
   const pEnv=done("env",api("/api/doctor/env"),(d)=>{
-    const box=$("#dgEnv");
+    const box=$("#dgEnv");stopTick("env");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
     box.innerHTML=d.env.map(envRow).join("");
-    if(G){G.from(box.querySelectorAll(".envrow"),{x:-10,opacity:0,duration:.3,stagger:.05,ease:"power2.out"});}});
-  await Promise.all([pLocal,pVm,pEnv]);
-  const usable=["mock",...new Set([...(results.local?.local||[]),...(results.vm?.vm||[])]
-    .filter(f=>f.found&&f.adapter).map(f=>f.adapter))];
-  const nFound=(results.local?.local||[]).filter(f=>f.found).length;
-  $("#dgHint").innerHTML=`本机发现 <b>${nFound}</b> 个智能体 · 可用适配器 <b>${usable.join(" · ")}</b>　<span style="color:var(--faint);font-size:12px">版本信息缓存 12h，「重新体检」强制刷新</span>`;
-  const bar=$("#dgBar");bar.style.display="flex";
-  const go=$("#docGoRun");
-  if(go){go.addEventListener("click",()=>switchTab("run"));}
-  if(G){G.fromTo(bar,{y:10,opacity:0},{y:0,opacity:1,duration:.35,ease:"power2.out"});}
+    if(G){
+      G.from(box.querySelectorAll(".envrow"),{x:-12,opacity:0,duration:.3,stagger:.05,ease:"power2.out"});
+      popIn(box.querySelectorAll(".envrow .pill"));
+      box.querySelectorAll(".envrow").forEach((r,i)=>{
+        if(!d.env[i].ok){G.fromTo(r,{x:0},{x:5,duration:.05,repeat:5,yoyo:true,ease:"none",delay:.4+i*.08});}});
+    }});
+  try{
+    await Promise.all([pLocal,pVm,pEnv]);
+    const usable=["mock",...new Set([...(results.local?.local||[]),...(results.vm?.vm||[])]
+      .filter(f=>f.found&&f.adapter).map(f=>f.adapter))];
+    const nFound=(results.local?.local||[]).filter(f=>f.found).length;
+    $("#dgHint").innerHTML=`本机发现 <b>${nFound}</b> 个智能体 · 可用适配器 <b>${usable.join(" · ")}</b>　<span style="color:var(--faint);font-size:12px">版本信息缓存 12h，「重新体检」强制刷新</span>`;
+    const bar=$("#dgBar");bar.style.display="flex";
+    const go=$("#docGoRun");
+    if(go){go.addEventListener("click",()=>switchTab("run"));}
+    if(G){G.fromTo(bar,{y:10,opacity:0},{y:0,opacity:1,duration:.35,ease:"power2.out"});}
+  }finally{
+    ["local","vm","env"].forEach(stopTick);
+    btn.disabled=false;btn.classList.remove("scanning");
+  }
 }
 $("#docRefresh").addEventListener("click",()=>loadDoctor(true));
 
@@ -750,6 +877,7 @@ window.addEventListener("load",()=>{
     .from("#tab-doctor .card",{y:16,opacity:0,duration:.45,ease:"power2.out"}, "-=.18");
   }
   loadDoctor();loadCaseDirs();
+  api("/api/meta").then(d=>{$("#ftVer").textContent="服务端 v"+d.version+" · py"+d.python;}).catch(()=>{});
 });
 if(document.fonts&&document.fonts.ready){
   document.fonts.ready.then(()=>{initInk();});}
