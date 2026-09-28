@@ -3,8 +3,9 @@
 CLI 实测（2026-09-28 send 实测校准，v0.7.5）：
 - send:    `kylin-bot agent -m "<msg>"` 免交互单发，每次独立进程（跨会话只靠 brain.db，
            正中考点）；输出 = 运行日志（ISO 时间戳开头）+ 纯文本回复，需过滤
-- 后端:    openKylin 官方网关 llm-gateway.openkylin.top（config.toml，deepseek-v4-flash），
-           不占评测方网关配额
+- 后端:    2026-09-28 起改挂评测方网关（config.toml custom 指向，qwen3.7-plus，
+           原官方网关 llm-gateway.openkylin.top 因 Token 余额 402 不可用，备份在
+           config.toml.bak-okgw）；单发 ~37k token，RPM 低，send 内置 10s 节流
 - 记忆库:  ~/.kylinbot/workspace/memory/brain.db（SQLite+FTS5）
            memories(id UUID, key, content, category, superseded_by, created_at)
            key 是语义键（user_name/code_directory），superseded_by = 版本链证据
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from datetime import datetime
 
@@ -36,6 +38,20 @@ EVAL_WORKDIRS = ["~/dev", "~/work", "~/proj", "~/docs", "~/notes",
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _LOG_LINE = re.compile(r"^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
+# 网关 RPM 限额低且超限掐 TLS（见 memory/vm-openkylin-access），发送间隔下限压节奏
+_SEND_MIN_INTERVAL = float(os.environ.get("KYLINBOT_SEND_INTERVAL", "10"))
+_send_lock = threading.Lock()
+_last_send = 0.0
+
+
+def _send_throttle() -> None:
+    global _last_send
+    with _send_lock:
+        wait = _SEND_MIN_INTERVAL - (time.monotonic() - _last_send)
+        if wait > 0:
+            time.sleep(wait)
+        _last_send = time.monotonic()
 
 _DUMP_SRC = (
     "import json,sqlite3,os\n"
@@ -70,6 +86,7 @@ class KylinBotAdapter(AgentAdapter):
                 raise RuntimeError(f"KylinBot 记忆清零失败: {(out + err).strip()[:300]}")
 
     def send(self, session_id: str, message: str) -> Reply:
+        _send_throttle()
         cmd = (f'timeout 280 kylin-bot agent -m "$(echo {b64(message)} | base64 -d)" '
                f"2>/dev/null")
         sent = now_utc()
