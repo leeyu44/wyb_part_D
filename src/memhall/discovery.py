@@ -97,7 +97,7 @@ LOCAL_AGENTS: list[tuple[str, list[str], list[str], str, str]] = [
     ("aider", ["aider"], ["~/.aider.conf.yml"], "", "cli"),
     ("goose", ["goose"], ["~/.config/goose"], "", "cli"),
     ("crush", ["crush"], ["~/.config/crush"], "", "cli"),
-    ("hermes", ["hermes"], ["~/.hermes"], "hermes", "cli"),
+    ("hermes", ["hermes"], ["~/.hermes"], "hermes-local", "cli"),
     ("kylin-bot", ["kylin-bot"], ["~/.kylinbot"], "kylinbot", "cli"),
     # --- IDE / 编辑器内智能体 ---
     ("cline", ["cline"], ["~/.cline"], "", "ide"),

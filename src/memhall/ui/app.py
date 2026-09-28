@@ -214,6 +214,9 @@ def create_app() -> FastAPI:
                 elif adapter_name == "kylinbot":
                     from memhall.adapters.kylinbot import KylinBotAdapter
                     adapters["kylinbot"] = KylinBotAdapter
+                elif adapter_name == "hermes-local":
+                    from memhall.adapters.hermes_local import LocalHermesAdapter
+                    adapters["hermes-local"] = LocalHermesAdapter
                 elif adapter_name == "opencode":
                     from memhall.adapters.opencode import OpenCodeAdapter
                     adapters["opencode"] = OpenCodeAdapter

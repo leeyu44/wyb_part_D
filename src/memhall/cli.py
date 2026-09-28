@@ -60,6 +60,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.adapter == "kylinbot":
         from memhall.adapters.kylinbot import KylinBotAdapter
         adapters["kylinbot"] = KylinBotAdapter
+    elif args.adapter == "hermes-local":
+        from memhall.adapters.hermes_local import LocalHermesAdapter
+        adapters["hermes-local"] = LocalHermesAdapter
     elif args.adapter == "opencode":
         from memhall.adapters.opencode import OpenCodeAdapter
         adapters["opencode"] = OpenCodeAdapter
