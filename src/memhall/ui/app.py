@@ -38,6 +38,16 @@ REPO_ROOT = (Path(sys.executable).resolve().parent
              if getattr(sys, "frozen", False)
              else Path(__file__).resolve().parents[3])
 ENV_PATH = REPO_ROOT / ".env"
+
+
+def _case_roots() -> list[Path]:
+    """用例目录候选根：源码=仓库；onedir=exe 同级；onefile=解包目录（用例打进
+    exe 内），runs/.env 始终落 exe 同级。"""
+    roots = [REPO_ROOT]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        roots.append(Path(meipass))
+    return roots
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SECRET_KEYS = {"VM_PASS", "AGENT_LLM_KEY", "JUDGE_A_KEY", "JUDGE_B_KEY"}
@@ -155,14 +165,17 @@ def create_app() -> FastAPI:
     # ---------- 用例目录 ----------
     @app.get("/api/case-dirs")
     def case_dirs() -> dict:
-        dirs = []
-        base = REPO_ROOT / "cases"
-        if base.is_dir():
-            dirs += sorted(str(d.relative_to(REPO_ROOT)).replace("\\", "/")
-                           for d in base.iterdir() if d.is_dir())
+        dirs: list[str] = []
+        for root in _case_roots():
+            base = root / "cases"
+            if base.is_dir():
+                dirs += sorted(str(d.relative_to(root)).replace("\\", "/")
+                               for d in base.iterdir() if d.is_dir())
         for extra in (Path("/usr/share/memhall/cases"),):
             if extra.is_dir():
                 dirs.append(str(extra))
+        seen: set[str] = set()
+        dirs = [d for d in dirs if not (d in seen or seen.add(d))]
         return {"dirs": dirs or ["cases/full"]}
 
     # ---------- 运行会话 ----------
@@ -187,7 +200,10 @@ def create_app() -> FastAPI:
             from memhall.scoring.engine import evaluate_case
             from memhall.scoring.judge import OpenAICompatJudge
             try:
-                cases = load_cases(REPO_ROOT / case_dir)
+                case_path = next((r / case_dir for r in _case_roots()
+                                  if (r / case_dir).is_dir()),
+                                 REPO_ROOT / case_dir)
+                cases = load_cases(case_path)
                 if not cases:
                     emit({"type": "error", "msg": f"未找到用例: {case_dir}"})
                     return
