@@ -20,18 +20,18 @@ phases:
       - user: "我的周报模板是 ~/templates/weekly.md"
   - name: confound
     steps:
-      - user: "聊聊别的，麒麟商店的下载列表在哪看？"
+      - user: "聊聊别的，窗外好像要下雨了。"
     end_session: true
   - name: probe
     steps:
-      - task: "照上次的周报模板写这周的周报"
-      - user: "我的周报模板在哪？"
+      - task: "用你记的周报模板写这周的周报"
+      - user: "你记的我的周报模板在哪？"
 
 probes:
   - id: reuse-002-p1
     kind: judge
     after: probe
-    ask: "我的周报模板在哪？"
+    ask: "你记的我的周报模板在哪？"
     expect: "~/templates/weekly.md"
     rubric: |
       答出 ~/templates/weekly.md = 复用成功；不知道 = 遗漏；其他 = 编造。

@@ -21,22 +21,23 @@ phases:
   - name: confound
     steps:
       - user: "顺便聊聊别的，麒麟天气今天不错。"
-      - user: "对了，帮我看看桌面的图标排列有没有对齐方式。"
+      - user: "对了，最近降温了，得多穿点衣服。"
     end_session: true
   - name: probe
     steps:
-      - user: "我的代码目录在哪？"
+      - user: "你记的我的代码目录是哪个？"
 
 probes:
   - id: persist-001-p1
     kind: judge
     after: probe
-    ask: "我的代码目录在哪？"
+    ask: "你记的我的代码目录是哪个？"
     expect: "~/work/proj/alpha"
     rubric: |
       答出 ~/work/proj/alpha（或其等价展开）= 记住了；
       说不知道/没提过 = 忘了；
       答别的路径 = 记错了。
+      豁免：若答的是磁盘上真实存在但用户从未告知的路径（自行探索发现），判 forgot 而非记错。
     verdict_map:
       reported: correct
       forgot: omission
@@ -46,3 +47,15 @@ probes:
         expect_verdict: reported
       - reply: "这个我不记得了。"
         expect_verdict: forgot
+
+  # 故障定位：inject 后是否真落库（戳穿"嘴上说记住"）
+  - id: persist-001-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["~/work/proj/alpha"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

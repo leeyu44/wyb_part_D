@@ -20,17 +20,17 @@ phases:
       - user: "我的笔记放在 ~/notes/memhall"
   - name: confound
     steps:
-      - user: "换个话题，音乐播放器怎么添加本地歌单？"
+      - user: "换个话题，今天中午食堂的牛肉面不错。"
     end_session: true
   - name: probe
     steps:
-      - user: "我的笔记在哪？"
+      - user: "你记的我的笔记放在哪？"
 
 probes:
   - id: persist-002-p1
     kind: judge
     after: probe
-    ask: "我的笔记在哪？"
+    ask: "你记的我的笔记放在哪？"
     expect: "~/notes/memhall"
     rubric: |
       答出 ~/notes/memhall = 记住了；不知道 = 忘了；其他路径 = 记错。

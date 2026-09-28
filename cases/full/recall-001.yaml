@@ -20,13 +20,13 @@ phases:
       - user: "我的构建产物放在 ~/out/build"
   - name: probe
     steps:
-      - user: "我的构建产物在哪？"
+      - user: "你记的我的构建产物放在哪？"
 
 probes:
   - id: recall-001-p1
     kind: judge
     after: probe
-    ask: "我的构建产物在哪？"
+    ask: "你记的我的构建产物放在哪？"
     expect: "~/out/build"
     rubric: |
       答出 ~/out/build = 调用成功；不知道 = 没记住；其他 = 记错。

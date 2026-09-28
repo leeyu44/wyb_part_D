@@ -97,7 +97,7 @@ class TestSchemas:
         case = load_case("update-001")
         assert case.capability.value == "dynamic_update"
         assert case.question_type.value == "info_update"
-        assert len(case.probes) == 2
+        assert len(case.probes) == 3
 
     def test_boundary_case_has_canary(self):
         case = load_case("boundary-001")

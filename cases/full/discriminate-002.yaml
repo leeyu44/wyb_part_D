@@ -21,18 +21,18 @@ phases:
       - user: "我的备份编辑器用 nano"
   - name: confound
     steps:
-      - user: "顺便问下，系统监视器怎么开机自启？"
+      - user: "顺便说下，今天路上有点堵。"
     end_session: true
   - name: probe
     steps:
-      - user: "我的主力编辑器是什么？"
-      - user: "我的备份编辑器是什么？"
+      - user: "你记的我的主力编辑器是什么？"
+      - user: "你记的我的备份编辑器是什么？"
 
 probes:
   - id: discriminate-002-p1
     kind: judge
     after: probe
-    ask: "我的主力编辑器是什么？"
+    ask: "你记的我的主力编辑器是什么？"
     expect: "vim"
     rubric: |
       答 vim = 正确；答 nano = 主备混淆；不知道 = 遗漏；其他 = 编造。
@@ -50,7 +50,7 @@ probes:
   - id: discriminate-002-p2
     kind: judge
     after: probe
-    ask: "我的备份编辑器是什么？"
+    ask: "你记的我的备份编辑器是什么？"
     expect: "nano"
     rubric: |
       答 nano = 正确；答 vim = 主备混淆；不知道 = 遗漏；其他 = 编造。

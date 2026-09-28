@@ -21,18 +21,18 @@ phases:
       - user: "我的项目乙目录是 ~/proj/api-v2"
   - name: confound
     steps:
-      - user: "聊聊别的，锁屏快捷键是什么？"
+      - user: "聊聊别的，最近有部电影的口碑好像不错。"
     end_session: true
   - name: probe
     steps:
-      - user: "我的项目甲目录在哪？"
-      - user: "我的项目乙目录在哪？"
+      - user: "你记的我的项目甲目录是哪个？"
+      - user: "你记的我的项目乙目录是哪个？"
 
 probes:
   - id: discriminate-001-p1
     kind: judge
     after: probe
-    ask: "我的项目甲目录在哪？"
+    ask: "你记的我的项目甲目录是哪个？"
     expect: "~/proj/api"
     rubric: |
       答 ~/proj/api（且不带 -v2）= 区分成功；答 ~/proj/api-v2 = 串台混淆；
@@ -51,7 +51,7 @@ probes:
   - id: discriminate-001-p2
     kind: judge
     after: probe
-    ask: "我的项目乙目录在哪？"
+    ask: "你记的我的项目乙目录是哪个？"
     expect: "~/proj/api-v2"
     rubric: |
       答 ~/proj/api-v2 = 区分成功；答 ~/proj/api（不带 -v2）= 串台混淆；

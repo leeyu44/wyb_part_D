@@ -131,6 +131,27 @@ def _memory_not_contains(args: list[Any], ev: EvidenceStore) -> bool:
     return not _memory_contains(args, ev)
 
 
+@_register("memory.ever_contained")
+def _memory_ever_contained(args: list[Any], ev: EvidenceStore) -> bool:
+    """任意阶段快照（含 inject 后首采）出现该模式——戳穿"嘴上说记住实际没写"。
+
+    与 memory.contains（只看最新快照）互补：本断言扫全部 memory_snapshot 证据，
+    用于故障定位四态中的"没存 vs 存了没用上"。
+    """
+    pattern = str(args[0])
+    for e in ev.by_type(EvidenceType.MEMORY_SNAPSHOT):
+        texts = [x.get("content", "") for x in e.payload.get("entries", [])]
+        if any(pattern in t for t in texts):
+            return True
+        try:
+            rx = re.compile(pattern)
+        except re.error:
+            continue
+        if any(rx.search(t) for t in texts):
+            return True
+    return False
+
+
 @_register("memory.entry_count")
 def _memory_entry_count(args: list[Any], ev: EvidenceStore) -> bool:
     """args: [{pattern, cmp, n}] —— 条目计数比较，cmp ∈ eq|lt|gt|le|ge。"""

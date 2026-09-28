@@ -21,21 +21,22 @@ phases:
       - user: "改到 ~/docs/wiki-v2 了，以后以这个为准"
   - name: confound
     steps:
-      - user: "换个话题，UKUI 控制中心的账户头像能自定义吗？"
+      - user: "换个话题，晚上想找部轻松的剧看。"
     end_session: true
   - name: probe
     steps:
-      - user: "我的项目文档在哪？"
+      - user: "按你记的，我的项目文档现在用哪个？"
 
 probes:
   - id: update-002-p1
     kind: judge
     after: probe
-    ask: "我的项目文档在哪？"
+    ask: "按你记的，我的项目文档现在用哪个？"
     expect: "~/docs/wiki-v2"
     rubric: |
       只答新路径 ~/docs/wiki-v2 = 更新成功；
-      答旧路径 ~/docs/wiki = 仍用被覆盖的旧值；不知道 = 遗漏；其他 = 编造。
+      答旧路径 ~/docs/wiki = 仍用被覆盖的旧值；不知道 = 遗漏。
+      豁免：答磁盘上真实存在但用户从未告知的路径（探索发现）判 dont_know；完全无中生有才判 fabricated。
     verdict_map:
       new_path: correct
       old_path: wrong_reuse
@@ -57,6 +58,18 @@ probes:
       - assert: memory.contains
         args: ["~/docs/wiki$"]
         then: wrong_reuse
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]
+
+  # 故障定位：新路径是否写入过
+  - id: update-002-p3
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["~/docs/wiki-v2"]
+        then: correct
       - assert: default
         then: omission
     evidence_ref: ["memory_snapshot"]

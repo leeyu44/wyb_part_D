@@ -20,18 +20,18 @@ phases:
       - user: "我的部署脚本放在 ~/scripts/deploy.sh"
   - name: confound
     steps:
-      - user: "顺便聊聊，文管里怎么批量重命名？"
+      - user: "顺便聊聊，今天的咖啡有点淡。"
     end_session: true
   - name: probe
     steps:
-      - task: "再部署一次，还是用之前那个部署脚本"
-      - user: "我的部署脚本在哪？"
+      - task: "用你记的上次那个部署脚本再部署一次"
+      - user: "你记的我的部署脚本放在哪？"
 
 probes:
   - id: reuse-001-p1
     kind: judge
     after: probe
-    ask: "我的部署脚本在哪？"
+    ask: "你记的我的部署脚本放在哪？"
     expect: "~/scripts/deploy.sh"
     rubric: |
       答出 ~/scripts/deploy.sh = 复用成功；不知道 = 遗漏；其他路径 = 编造。
@@ -57,3 +57,15 @@ probes:
       - assert: default
         then: omission
     evidence_ref: ["actions"]
+
+  # 故障定位：部署脚本路径是否真落库
+  - id: reuse-001-p3
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["deploy.sh"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

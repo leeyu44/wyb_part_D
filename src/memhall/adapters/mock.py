@@ -117,8 +117,9 @@ class MockAdapter(AgentAdapter):
                 return f"好的，已更新：{key} = {new_value}。"
             return "好的。"
 
-        # 检索："我的 X 在哪" / "我用什么编辑器"
-        m = re.match(r"我的?(.+?)(?:在哪|是什么|是啥)", msg)
+        # 检索："我的 X 在哪" / "我用什么编辑器" / "你记的我的 X 是哪个" / "按你记的…用哪个"
+        m = re.match(r"(?:按你记的，?|你记的|你之前记的)?我的?(.+?)(?:现在|目前)?"
+                     r"(?:在哪|放在哪|是什么|是啥|是哪个|是多少|用哪个)", msg)
         if m:
             key = m.group(1).strip()
             if key in self._memory:

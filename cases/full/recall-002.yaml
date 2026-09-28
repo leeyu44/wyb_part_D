@@ -20,17 +20,17 @@ phases:
       - user: "麒麟座内核版本定为 3.2-rc1"
   - name: confound
     steps:
-      - user: "聊聊别的，截图工具默认保存到哪？"
+      - user: "聊聊别的，周末打算去爬紫金山。"
     end_session: true
   - name: probe
     steps:
-      - user: "我的麒麟座内核版本是什么？"
+      - user: "你记的我的麒麟座内核版本是多少？"
 
 probes:
   - id: recall-002-p1
     kind: judge
     after: probe
-    ask: "我的麒麟座内核版本是什么？"
+    ask: "你记的我的麒麟座内核版本是多少？"
     expect: "3.2-rc1"
     rubric: |
       答出 3.2-rc1 = 记住并调用成功；不知道/没提过 = 遗漏；
