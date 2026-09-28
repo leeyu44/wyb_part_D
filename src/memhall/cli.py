@@ -87,15 +87,35 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_verdicts(run_dir: Path, manifest: dict,
+                   cases: dict[str, MemoryCase], dual) -> list[Verdict]:
+    """优先读已落盘 verdicts；缺则从证据 JSONL 重放评分（评测贵、评分便宜）。"""
+    vpath = run_dir / "verdicts.jsonl"
+    if vpath.exists():
+        return [Verdict.model_validate(json.loads(line))
+                for line in vpath.read_text(encoding="utf-8").splitlines()]
+    from memhall.schema.evidence import Evidence
+    from memhall.scoring.engine import evaluate_case
+    from memhall.scoring.rules import EvidenceStore
+    verdicts: list[Verdict] = []
+    for cid in manifest["cases"]:
+        case = cases[cid]
+        ev_path = run_dir / "cases" / cid / "evidence.jsonl"
+        store = EvidenceStore([Evidence.model_validate(json.loads(line))
+                               for line in ev_path.read_text(encoding="utf-8").splitlines()])
+        verdicts.extend(evaluate_case(case, store, manifest["run_id"], dual))
+    return verdicts
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     repo_root = Path(__file__).resolve().parents[2]
     cases = {c.case_id: c for c in load_cases(repo_root / "cases" / "full")}
-    verdicts = [Verdict.model_validate(json.loads(line))
-                for line in (run_dir / "verdicts.jsonl").read_text(encoding="utf-8").splitlines()]
+    dual = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
+    verdicts = _load_verdicts(run_dir, manifest, cases, dual)
     metrics = _finish_run(run_dir, manifest["run_id"], manifest, verdicts, cases)
-    print(f"报告已重渲染: {run_dir / 'report.md'}（总体 {metrics['overall_score']:.1%}）")
+    print(f"报告已出: {run_dir / 'report.md'}（总体 {metrics['overall_score']:.1%}）")
     return 0
 
 
@@ -112,8 +132,10 @@ def main() -> None:
                        help="判卷方式（dual 需 JUDGE_A_/JUDGE_B_ 环境变量）")
     p_run.set_defaults(func=cmd_run)
 
-    p_rep = sub.add_parser("report", help="重渲染已有 run 的报告")
+    p_rep = sub.add_parser("report", help="出报告（缺 verdicts 时从证据重放评分）")
     p_rep.add_argument("run_dir", help="runs/ 下的 run 目录")
+    p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
+                       help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
 
     args = parser.parse_args()

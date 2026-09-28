@@ -45,6 +45,13 @@ def _norm_pair(message: str, ask: str) -> bool:
     return a == b or b in a or a in b
 
 
+def _raw_verdict(key: str | None, probe: JudgeProbe) -> VerdictValue:
+    """judge 原始输出（verdict_map 的 key）→ 五态；非法/缺失 → invalid_run。"""
+    if key is None:
+        return VerdictValue.INVALID_RUN
+    return VerdictValue(probe.verdict_map.get(key, "invalid_run"))
+
+
 def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: int,
                    dual: Optional[tuple[OpenAICompatJudge, OpenAICompatJudge]]) -> Verdict:
     answer = _answer_for(store, probe.ask)
@@ -57,12 +64,10 @@ def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: in
             decided_by = DecidedBy.ARBITRATION if outcome.arbitrated else DecidedBy.JUDGE_A
             meta = JudgeMeta(
                 judge_a=JudgeMetaItem(model=outcome.judge_a or "",
-                                      verdict=VerdictValue(outcome.judge_a_raw)
-                                      if outcome.judge_a_raw else VerdictValue.INVALID_RUN,
+                                      verdict=_raw_verdict(outcome.judge_a_raw, probe),
                                       agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
                 judge_b=JudgeMetaItem(model=outcome.judge_b or "",
-                                      verdict=VerdictValue(outcome.judge_b_raw)
-                                      if outcome.judge_b_raw else VerdictValue.INVALID_RUN,
+                                      verdict=_raw_verdict(outcome.judge_b_raw, probe),
                                       agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
                 prompt_version="judge-prompt-v1",
                 arbiter="judge_a-arbiter" if outcome.arbitrated else None,
