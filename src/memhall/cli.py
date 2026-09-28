@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -59,6 +60,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.adapter == "kylinbot":
         from memhall.adapters.kylinbot import KylinBotAdapter
         adapters["kylinbot"] = KylinBotAdapter
+    elif args.adapter == "hermes-local":
+        from memhall.adapters.hermes_local import LocalHermesAdapter
+        adapters["hermes-local"] = LocalHermesAdapter
+    elif args.adapter == "opencode":
+        from memhall.adapters.opencode import OpenCodeAdapter
+        adapters["opencode"] = OpenCodeAdapter
     if args.adapter not in adapters:
         print(f"未知适配器: {args.adapter}（可选: {', '.join(adapters)}）", file=sys.stderr)
         return 1
@@ -119,7 +126,140 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ensure_streams() -> None:
+    """窗口模式 exe（console=False）双击启动时无控制台，sys.stdout/stderr
+    为 None——print/logging 一碰就崩。重定向到 exe 同级 memhall.log，
+    写不进（只读目录等）则退临时目录。"""
+    if not (getattr(sys, "frozen", False)
+            and (sys.stdout is None or sys.stderr is None)):
+        return
+    import tempfile
+    from pathlib import Path
+    for base in (Path(sys.executable).resolve().parent,
+                 Path(tempfile.gettempdir())):
+        try:
+            log = (base / "memhall.log").open("a", encoding="utf-8")
+        except OSError:
+            continue
+        if sys.stdout is None:
+            sys.stdout = log
+        if sys.stderr is None:
+            sys.stderr = log
+        break
+
+
+def _utf8_console() -> None:
+    """Windows 控制台默认 GBK 代码页，中文输出乱码——统一改 UTF-8。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and stream.encoding and stream.encoding.lower() not in ("utf-8", "utf8"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except AttributeError:
+                pass  # 非 TextIOWrapper（重定向到文件等）时不动
+
+
+def _load_dotenv() -> None:
+    """把 .env 装进进程环境（setdefault，手工 export 优先）。
+    候选：源码=仓库根 / 打包=exe 同级 / deb 装机=~/memhall.env。
+    所有 CLI 入口统一走这里——run/doctor 直跑也依赖 AGENT_LLM_* 等键。"""
+    candidates = ([Path(sys.executable).resolve().parent / ".env"]
+                  if getattr(sys, "frozen", False)
+                  else [Path(__file__).resolve().parents[2] / ".env"])
+    candidates.append(Path.home() / "memhall.env")  # deb 装机配置页的落点
+    for env_file in candidates:
+        if not env_file.exists():
+            continue
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from memhall.discovery import render_doctor, run_doctor
+    rep = run_doctor(scan_remote=not args.no_vm)
+    print(render_doctor(rep))
+    return 0 if rep.usable_adapters() else 1
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from memhall.ui.app import create_app
+    app = create_app()
+    if args.window:
+        return _run_window(app)
+    import threading
+    import webbrowser
+    url = f"http://127.0.0.1:{args.port}/"
+    if not args.no_open:
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    print(f"麟阁 Web UI: {url}（Ctrl+C 退出）")
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    return 0
+
+
+def _run_window(app) -> int:
+    """原生窗口壳：优先 pywebview（真原生窗口+任务栏图标）；打包环境缺
+    pythonnet/WebView2 时退 Edge 应用模式窗口（无地址栏，观感接近原生）。"""
+    import shutil
+    import socket
+    import subprocess
+    import threading
+    import time
+    import urllib.request
+
+    import uvicorn
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning"))
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    url = f"http://127.0.0.1:{port}/"
+    for _ in range(50):  # 等服务就绪再开窗，避免白屏
+        try:
+            urllib.request.urlopen(f"{url}api/meta", timeout=1).read()
+            break
+        except OSError:
+            time.sleep(0.2)
+    try:
+        import webview
+        webview.create_window("麟阁 MemHall · 智能体记忆评测", url,
+                              width=1280, height=880, min_size=(980, 640))
+        webview.start()
+        return 0
+    except Exception:
+        pass
+    _open_app_window(url)
+    t.join()
+    return 0
+
+
+def _open_app_window(url: str) -> None:
+    """Edge/Chrome 的 --app 窗口（无地址栏）；都没有则普通浏览器。"""
+    import os
+    import webbrowser
+
+    cands = [shutil.which("msedge"), shutil.which("chrome"),
+             os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+             os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe")]
+    for path in cands:
+        if path and os.path.isfile(path):
+            import subprocess
+            subprocess.Popen([path, f"--app={url}"])
+            return
+    webbrowser.open(url)
+
+
 def main() -> None:
+    _ensure_streams()
+    _utf8_console()
+    _load_dotenv()
+    if len(sys.argv) == 1 and getattr(sys, "frozen", False):
+        sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
     parser = argparse.ArgumentParser(prog="memhall",
                                      description="麟阁：智能体记忆能力评测基准")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -137,6 +277,17 @@ def main() -> None:
     p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
                        help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
+
+    p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
+    p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
+    p_doc.set_defaults(func=cmd_doctor)
+
+    p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）")
+    p_ui.add_argument("--port", type=int, default=8300, help="端口（默认 8300）")
+    p_ui.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+    p_ui.add_argument("--window", action="store_true",
+                      help="原生窗口模式（pywebview，exe 双击默认）")
+    p_ui.set_defaults(func=cmd_ui)
 
     args = parser.parse_args()
     raise SystemExit(args.func(args))

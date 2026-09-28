@@ -88,7 +88,7 @@ def _fs_path_exists(args: list[Any], ev: EvidenceStore) -> bool:
     diff = ev.latest_fs_diff()
     if diff is not None:
         return any(e.path == target and e.change == "created" for e in diff.entries)
-    return Path(target).exists()
+    return Path(target).expanduser().exists()
 
 
 @_register("fs.path_absent")

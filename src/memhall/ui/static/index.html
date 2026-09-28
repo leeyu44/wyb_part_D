@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>麟阁 MemHall · 智能体记忆评测</title>
+<link rel="icon" href="/static/icon.ico">
+<style>
+@font-face{font-family:"Fraunces";src:url("/static/fonts/fraunces-500.woff2") format("woff2");
+  font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"Fraunces";src:url("/static/fonts/fraunces-600.woff2") format("woff2");
+  font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:"Fraunces";src:url("/static/fonts/fraunces-700.woff2") format("woff2");
+  font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"NotoSerifSCDisplay";src:url("/static/fonts/notoserif-sc-sub.woff2") format("woff2");
+  font-weight:500 700;font-style:normal;font-display:swap}
+:root{
+  --bg:#fafafa; --card:#ffffff; --panel:#f4f4f5;
+  --ink:#18181b; --sub:#71717a; --faint:#a1a1aa;
+  --line:#e4e4e7; --line-soft:#ededf0;
+  --acc:#3790FA; --acc-hov:#2F7CE6; --acc-ink:#1D6FD6;
+  --acc-soft:#EAF3FE; --acc-line:#C2DAFB;
+  --ok:#15803d; --ok-soft:#f0f9f1;
+  --warn:#b45309; --warn-soft:#fdf8ec;
+  --bad:#b91c1c; --bad-soft:#fdf1f1;
+  --purple:#6d28d9; --purple-soft:#f4f1fb;
+  --dim:#71717a; --dim-soft:#f4f4f5;
+  --r:8px; --r-card:10px;
+  --shadow:0 1px 2px rgba(24,24,27,.06);
+  --serif:"Fraunces","NotoSerifSCDisplay","Songti SC","SimSun",serif;
+  --sans:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"Cascadia Code",Consolas,"PingFang SC","Microsoft YaHei",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-font-smoothing:antialiased}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);
+  font-size:14px;line-height:1.55;min-height:100vh}
+.app{max-width:1100px;margin:0 auto;padding:24px 24px 64px}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:6px 0 20px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.logo{width:40px;height:40px;border-radius:var(--r);display:grid;place-items:center;
+  font-family:var(--serif);font-size:21px;font-weight:700;color:#fff;flex:none;
+  background:var(--acc)}
+.brand h1{font-family:var(--serif);font-size:20px;font-weight:700;
+  line-height:1.25;white-space:nowrap}
+.brand p{font-size:12.5px;color:var(--sub);margin-top:1px;white-space:nowrap}
+nav{display:flex;gap:2px;position:relative;background:var(--panel);
+  padding:3px;border-radius:var(--r);flex:none}
+nav button{border:0;background:transparent;padding:7px 18px;font-size:13.5px;
+  font-family:var(--sans);color:var(--sub);cursor:pointer;border-radius:6px;
+  transition:color .15s;font-weight:500;white-space:nowrap;position:relative;z-index:1}
+nav button:hover{color:var(--ink)}
+nav button.on{color:var(--ink)}
+.nav-ink{position:absolute;top:3px;left:0;height:calc(100% - 6px);border-radius:6px;
+  background:var(--card);box-shadow:var(--shadow);border:1px solid var(--line);
+  pointer-events:none}
+main{min-height:420px}
+.tab{display:none}
+.tab.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);
+  padding:20px 22px}
+h2.sec{font-size:13px;color:var(--sub);font-weight:600;margin:22px 0 10px;
+  display:flex;align-items:center;gap:8px}
+h2.sec:first-child{margin-top:0}
+h2.sec::before{content:"";width:3px;height:12px;border-radius:2px;background:var(--acc)}
+.cardtitle{font-family:var(--serif);font-weight:600;font-size:18px;line-height:1.4}
+.grid-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:10px}
+.mini{border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;
+  background:var(--card);transition:border-color .15s}
+.mini:hover{border-color:var(--acc)}
+.mini .name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:7px;
+  flex-wrap:wrap;line-height:1.5}
+.mini .meta{font-size:12.5px;color:var(--sub);margin-top:4px;
+  font-family:var(--mono);word-break:break-all;line-height:1.6}
+.mini.ghost{opacity:.5;border-style:dashed}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.dot.y{background:var(--ok)}
+.dot.n{background:var(--line)}
+.tag{font-size:11.5px;font-family:var(--mono);color:var(--sub);
+  border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.tag.act{color:var(--ok);border-color:#bbe7c9;background:var(--ok-soft)}
+.tag.idle{color:var(--faint)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;
+  padding:2px 9px;border-radius:6px;font-weight:600;white-space:nowrap;
+  font-family:var(--sans);line-height:1.6}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.info{background:var(--acc-soft);color:var(--acc-ink)}
+.pill.dim{background:var(--dim-soft);color:var(--dim)}
+.pill.purple{background:var(--purple-soft);color:var(--purple)}
+.envrow{display:flex;align-items:center;gap:12px;padding:9px 2px;flex-wrap:wrap;
+  border-bottom:1px solid var(--line-soft);font-size:13.5px}
+.envrow:last-child{border-bottom:0}
+.envrow .n{width:140px;flex:none;font-weight:500}
+.envrow .d{color:var(--sub);font-size:12.5px;font-family:var(--mono);word-break:break-all}
+.actionbar{margin-top:18px;padding-top:16px;border-top:1px solid var(--line-soft);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.actionbar .hint{font-size:13px;color:var(--sub)}
+.actionbar .hint b{color:var(--ink);font-weight:600}
+button.act{border:0;border-radius:var(--r);padding:9px 20px;font-size:13.5px;
+  font-family:var(--sans);font-weight:600;cursor:pointer;color:#fff;
+  background:var(--acc);transition:background .15s}
+button.act:hover{background:var(--acc-hov)}
+button.act:disabled{opacity:.4;cursor:not-allowed}
+button.ghostbtn{border:1px solid var(--line);background:var(--card);color:var(--sub);
+  border-radius:var(--r);padding:9px 16px;font-size:13.5px;font-family:var(--sans);
+  cursor:pointer;transition:all .15s}
+button.ghostbtn:hover:not(:disabled){color:var(--ink);border-color:var(--faint)}
+button.ghostbtn:disabled{opacity:.4;cursor:not-allowed}
+.formrow{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field label{font-size:12.5px;color:var(--sub);font-weight:500}
+select,input[type=text],input[type=password]{
+  border:1px solid var(--line);border-radius:var(--r);padding:8px 12px;font-size:13.5px;
+  font-family:var(--sans);background:var(--card);color:var(--ink);min-width:168px;
+  outline:0;transition:border .15s,box-shadow .15s;height:38px}
+select:focus,input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(55,144,250,.18)}
+.progress-wrap{margin:20px 0 12px}
+.progress-meta{display:flex;justify-content:space-between;align-items:baseline;
+  font-size:12.5px;color:var(--sub);margin-bottom:7px;gap:12px}
+#progLabel{font-family:var(--mono);min-width:0;flex:1;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+#progCount{font-family:var(--mono);flex:none}
+.progress{height:8px;border-radius:99px;background:var(--panel);overflow:hidden}
+.progress > i{display:block;height:100%;width:0%;border-radius:99px;background:var(--acc)}
+.console{background:#111113;border-radius:var(--r);padding:13px 15px;height:300px;
+  overflow-y:auto;font-family:var(--mono);font-size:12.5px;line-height:1.8;
+  color:#d4d4d8;box-shadow:inset 0 1px 4px rgba(0,0,0,.3)}
+.console .t{color:#52525b;margin-right:9px}
+.console span{white-space:pre-wrap;word-break:break-word}
+.console .lv-start{color:#7fb5fd}.console .lv-case{color:#a3c99a}
+.console .lv-phase{color:#dcbf7c}.console .lv-done{color:#8fce8f;font-weight:700}
+.console .lv-stopped{color:#dcbf7c}.console .lv-error{color:#e58a7c}
+.console .lv-info{color:#71717a}
+.console .lv-casehead{color:#c9b98a;font-weight:700}
+.console .lv-ask{color:#8ec5ff;font-weight:600}.console .lv-ask-dim{color:#62626b}
+.console .lv-reply{color:#ececf1}.console .lv-reply-dim{color:#9d9da6}
+.console .lv-mem{color:#7fd4a8}
+.result{margin-top:16px;display:none}
+.score-big{font-family:var(--serif);font-weight:700;color:var(--acc-ink);
+  font-variant-numeric:tabular-nums;line-height:1.3}
+.res-size{font-size:42px}
+.rd-size{font-size:34px}
+.capbars{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.capbar{display:grid;grid-template-columns:max-content 1fr 3.4em;align-items:center;
+  gap:12px;font-size:13px;white-space:nowrap}
+.capbar .track{height:6px;background:var(--panel);border-radius:99px;overflow:hidden;min-width:80px}
+.capbar .track i{display:block;height:100%;width:0;border-radius:99px;background:var(--acc)}
+.capbar .v{font-family:var(--mono);color:var(--sub);text-align:right;font-size:12px}
+.runs-table{width:100%;border-collapse:collapse;font-size:13.5px}
+.runs-table th{text-align:left;color:var(--sub);font-weight:500;font-size:12.5px;
+  padding:8px 10px;border-bottom:1px solid var(--line)}
+.runs-table td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+.runs-table tr.row{cursor:pointer;transition:background .12s}
+.vrow{cursor:pointer}
+.vrow:hover{background:var(--panel)}
+.runs-table tr.row:hover{background:var(--panel)}
+.runs-table tr.sel{background:var(--acc-soft)}
+.mono{font-family:var(--mono)}
+.runid{white-space:nowrap}
+.report-detail{display:none;margin-top:16px}
+.radar-box{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;margin-top:14px}
+.radar-box img{width:min(430px,100%);height:auto;border-radius:var(--r);
+  border:1px solid var(--line);background:var(--card)}
+.radar-side{flex:1;min-width:270px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.chip{border:1px solid var(--line);background:var(--card);border-radius:99px;
+  padding:4px 12px;font-size:12.5px;cursor:pointer;color:var(--sub);
+  font-family:var(--sans);transition:all .15s}
+.chip:hover{border-color:var(--faint);color:var(--ink)}
+.chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.verdict-table{width:100%;border-collapse:collapse;font-size:13px}
+.verdict-table th{text-align:left;padding:6px 9px;color:var(--sub);font-size:12px;
+  border-bottom:1px solid var(--line)}
+.verdict-table td{padding:6px 9px;border-bottom:1px solid var(--line-soft);
+  vertical-align:top;word-break:break-word}
+.verdict-table td.exp{color:var(--sub);max-width:430px}
+.cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.cfg-sub{font-size:12.5px;color:var(--sub);margin:-4px 0 12px;line-height:1.6;max-width:720px}
+.cfg-item{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cfg-item label{font-size:12px;color:var(--sub);font-weight:500;
+  font-family:var(--mono);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cfg-item input{width:100%;min-width:0}
+#toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(80px);
+  background:var(--ink);color:#fff;padding:10px 20px;border-radius:var(--r);
+  font-size:13.5px;box-shadow:0 8px 24px rgba(0,0,0,.18);opacity:0;z-index:99}
+.ev-overlay{position:fixed;inset:0;background:rgba(24,24,27,.42);display:none;
+  z-index:90;align-items:flex-start;justify-content:center;padding:36px 16px;overflow-y:auto}
+.ev-overlay.on{display:flex}
+.ev-card{background:var(--card);border-radius:12px;border:1px solid var(--line);
+  width:min(760px,100%);max-height:calc(100vh - 72px);display:flex;flex-direction:column}
+.ev-head{display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:14px 20px;border-bottom:1px solid var(--line)}
+.ev-body{padding:16px 20px;overflow-y:auto}
+.phase-h{display:flex;align-items:center;gap:10px;margin:16px 0 10px}
+.phase-h:first-child{margin-top:0}
+.phase-chip{font-weight:600;font-size:12.5px;padding:3px 10px;border-radius:6px;
+  background:var(--acc-soft);color:var(--acc-ink)}
+.clock-badge{font-family:var(--mono);font-size:11.5px;color:var(--warn);
+  border:1px solid var(--warn-soft);border-radius:5px;padding:1px 7px;background:var(--warn-soft)}
+.turn{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.turn .who{font-size:11.5px;color:var(--faint)}
+.turn .u{align-self:flex-end;max-width:85%;background:var(--panel);
+  border-radius:10px 10px 2px 10px;padding:8px 12px;font-size:13.5px;white-space:pre-wrap}
+.turn .a{align-self:flex-start;max-width:92%;border:1px solid var(--line);
+  border-radius:10px 10px 10px 2px;padding:8px 12px;font-size:13.5px;white-space:pre-wrap;position:relative}
+.lat{font-family:var(--mono);font-size:11px;color:var(--faint);align-self:flex-end}
+.memsec{margin-top:16px}
+.memlist{border:1px solid var(--line-soft);border-radius:var(--r);padding:10px 12px;margin-top:6px}
+.memlist div{font-family:var(--mono);font-size:12px;padding:2px 0;word-break:break-all}
+.fslist{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.fslist span{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);
+  border-radius:5px;padding:2px 7px;color:var(--ok)}
+.xbtn{border:0;background:transparent;color:var(--faint);font-size:20px;cursor:pointer;
+  line-height:1;padding:4px 8px;border-radius:6px}
+.xbtn:hover{color:var(--ink);background:var(--panel)}
+.empty{color:var(--faint);font-size:13px;padding:16px 2px}
+.compare-bar{display:none;align-items:center;gap:12px;margin:12px 0 4px;flex-wrap:wrap}
+footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);
+  border-top-color:var(--acc);border-radius:50%;animation:rot .8s linear infinite;
+  vertical-align:-2px}
+@keyframes rot{to{transform:rotate(360deg)}}
+/* ---- 扫描舱（体检页）：雷达 / SSH 链路 / LED 打点 ---- */
+.scanrig{display:flex;align-items:center;gap:18px;min-height:96px;grid-column:1/-1;padding:14px 2px}
+.radar{width:64px;height:64px;border-radius:50%;position:relative;flex:none;
+  background:var(--acc-soft);border:1px solid var(--acc-line);overflow:hidden}
+.radar .beam{position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 0deg,rgba(55,144,250,.45),rgba(55,144,250,.12) 55deg,transparent 72deg);
+  animation:sweep 1.5s linear infinite}
+.radar .ring{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;
+  border:1.5px solid var(--acc);opacity:0;transform:translate(-50%,-50%);
+  animation:ping 1.6s ease-out infinite}
+.radar .ring.r2{animation-delay:.8s}
+.radar .core{position:absolute;left:50%;top:50%;width:7px;height:7px;border-radius:50%;
+  background:var(--acc);transform:translate(-50%,-50%);animation:corepulse 1.6s ease-in-out infinite}
+@keyframes sweep{to{transform:rotate(360deg)}}
+@keyframes ping{0%{width:0;height:0;opacity:.5}70%{opacity:.12}100%{width:96%;height:96%;opacity:0}}
+@keyframes corepulse{0%,100%{transform:translate(-50%,-50%) scale(1)}50%{transform:translate(-50%,-50%) scale(1.5)}}
+.scaninfo{min-width:0;flex:1}
+.scanline{font-size:13.5px;color:var(--ink)}
+.scanline b{color:var(--acc-ink);font-weight:600}
+.ticker{margin-top:5px;font-family:var(--mono);font-size:12.5px;color:var(--sub);
+  height:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ticker .cur{display:inline-block}
+.scanbar{height:3px;border-radius:99px;margin-top:10px;max-width:300px;overflow:hidden;
+  background:var(--line-soft);position:relative}
+.scanbar i{position:absolute;top:0;bottom:0;width:38%;border-radius:99px;background:var(--acc);
+  animation:slide 1.2s ease-in-out infinite}
+@keyframes slide{0%{left:-40%}100%{left:105%}}
+.wire{display:flex;align-items:center;width:170px;flex:none}
+.wire .node{width:10px;height:10px;border-radius:50%;background:var(--acc);flex:none;
+  box-shadow:0 0 0 4px var(--acc-soft)}
+.wire .path{flex:1;height:2px;background:var(--acc-line);position:relative;overflow:hidden;margin:0 7px}
+.wire .pkt{position:absolute;top:-1.5px;width:5px;height:5px;border-radius:50%;
+  background:var(--acc-ink);animation:travel 1.4s linear infinite}
+.wire .pkt.p2{animation-delay:.47s}.wire .pkt.p3{animation-delay:.93s}
+@keyframes travel{0%{left:-8px}100%{left:calc(100% + 3px)}}
+.leds{display:flex;gap:7px;flex:none;padding:0 6px}
+.leds i{width:9px;height:9px;border-radius:50%;background:var(--acc);animation:led 1.2s ease-in-out infinite}
+.leds i:nth-child(2){animation-delay:.15s}.leds i:nth-child(3){animation-delay:.3s}
+@keyframes led{0%,100%{opacity:.25;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+.mini{position:relative;overflow:hidden}
+.mini .shine{position:absolute;inset:0;pointer-events:none;opacity:0;
+  background:linear-gradient(105deg,transparent 42%,rgba(55,144,250,.2) 50%,transparent 58%)}
+.found-badge{display:inline-flex;align-items:baseline;gap:4px;margin-left:10px;
+  font-family:var(--serif);font-size:15px;font-weight:700;color:var(--acc-ink)}
+.found-badge small{font-family:var(--sans);font-size:11.5px;font-weight:500;color:var(--sub)}
+#docRefresh.scanning{position:relative;overflow:hidden;color:var(--acc-ink);pointer-events:none}
+#docRefresh.scanning::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 30%,var(--acc-soft) 50%,transparent 70%);
+  animation:shimmer 1.1s linear infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="logo">麟</div>
+      <div><h1>麟阁 MemHall</h1><p>面向 openKylin 生态的智能体记忆能力评测基准</p></div>
+    </div>
+    <nav id="nav">
+      <span class="nav-ink" id="navInk"></span>
+      <button data-tab="doctor" class="on">体检</button>
+      <button data-tab="run">评测</button>
+      <button data-tab="report">报告</button>
+      <button data-tab="config">配置</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 体检 -->
+    <section id="tab-doctor" class="tab on">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div class="cardtitle">环境体检
+            <span style="font-family:var(--sans);font-weight:400;font-size:12.5px;color:var(--sub)">　一键发现本机 / 评测机智能体</span></div>
+          <button class="ghostbtn" id="docRefresh">重新体检</button>
+        </div>
+        <div id="docBody"><div class="empty"><span class="spin"></span> 探测中…</div></div>
+      </div>
+    </section>
+
+    <!-- 评测 -->
+    <section id="tab-run" class="tab">
+      <div class="card">
+        <div class="cardtitle" style="margin-bottom:14px">评测</div>
+        <div class="formrow">
+          <div class="field"><label>被测智能体</label>
+            <select id="fAdapter"><option value="mock">mock（离线演示）</option>
+              <option value="hermes-local">hermes（本机）</option>
+              <option value="hermes">hermes（VM）</option><option value="kylinbot">kylinbot（VM）</option></select></div>
+          <div class="field"><label>用例集</label><select id="fCases"></select></div>
+          <div class="field"><label>判卷</label>
+            <select id="fJudge"><option value="scripted">脚本判卷（离线）</option>
+              <option value="dual">LLM 判卷（qwen 单判）</option></select></div>
+          <button class="act" id="btnStart">开始评测</button>
+          <button class="ghostbtn" id="btnStop" disabled>停止</button>
+        </div>
+        <div class="progress-wrap">
+          <div class="progress-meta"><span id="progLabel">待命</span><span id="progCount"></span></div>
+          <div class="progress"><i id="progBar"></i></div>
+        </div>
+        <div class="console" id="console"><div><span class="t">--:--:--</span><span class="lv-info">就绪。点击「开始评测」跑一轮三阶段剧本（教 → 隔 → 考）。</span></div></div>
+        <div class="result card" id="resultCard">
+          <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+            <div><div style="font-size:12px;color:var(--sub)">总体正确率</div>
+              <div class="score-big res-size" id="resScore">0%</div>
+              <div style="font-size:12.5px;color:var(--sub)" id="resValid"></div></div>
+            <div class="radar-side" style="min-width:280px"><div class="capbars" id="resCaps"></div></div>
+            <button class="act" id="btnToReport">查看完整报告 →</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 报告 -->
+    <section id="tab-report" class="tab">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div class="cardtitle">历史运行</div>
+          <button class="ghostbtn" id="runsRefresh">刷新</button>
+        </div>
+        <div class="compare-bar" id="compareBar">
+          <span style="font-size:13px;color:var(--sub)">已选 <b id="cmpNames"></b></span>
+          <button class="act" id="btnCompare" style="padding:7px 16px;font-size:13px">生成对比雷达</button>
+        </div>
+        <div id="runsList"><div class="empty">加载中…</div></div>
+      </div>
+      <div class="card report-detail" id="reportDetail">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0">
+            <span class="mono runid" id="rdRunId" style="font-size:14px;font-weight:600"></span>
+            <span class="tag" id="rdAdapter"></span></div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:12px;color:var(--sub)">总体</span>
+            <span class="score-big rd-size" id="rdScore">0%</span></div>
+        </div>
+        <div class="radar-box">
+          <img id="rdRadar" alt="六维能力雷达图">
+          <div class="radar-side">
+            <h2.sec style="margin-top:0">六维能力</h2.sec>
+            <div class="capbars" id="rdCaps"></div>
+          </div>
+        </div>
+        <h2.sec>判定明细</h2.sec>
+        <div class="chips" id="vChips"></div>
+        <table class="verdict-table"><thead><tr>
+          <th>探测点</th><th>用例</th><th>判定</th><th>判卷</th><th>说明</th></tr></thead>
+          <tbody id="vBody"></tbody></table>
+      </div>
+    </section>
+
+    <!-- 配置 -->
+    <section id="tab-config" class="tab">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+          <div><div class="cardtitle">运行配置</div>
+            <div style="font-size:12.5px;color:var(--sub);margin-top:4px">
+              写入 <span class="mono" id="cfgPath"></span>（不入 git）；密钥只回显「已设置」，留空即保持不变</div></div>
+          <button class="act" id="btnSaveCfg">保存配置</button>
+        </div>
+        <h2.sec>评测机 SSH —— hermes / kylinbot 走这条通道</h2>
+        <div class="cfg-sub">被测智能体跑在 openKylin VM 里：麟阁靠这条 SSH 驱动它发消息、取记忆证据，体检页"评测机"段同源</div>
+        <div class="cfg-grid" id="cfgVM"></div>
+        <h2.sec>判卷 LLM —— 选「LLM 判卷」时才联网</h2>
+        <div class="cfg-sub">脚本判卷离线零成本。选 LLM 判卷时用 JUDGE_A 组打分（当前 qwen 单判），JUDGE_B 配置后才启用双判仲裁。被测智能体自己的模型后端不在这里——各智能体安装时就已配好（如 kylinbot 的 config.toml）</div>
+        <div class="cfg-grid" id="cfgJudge"></div>
+        <h2.sec>网关防护 —— RPM 超限会掐连接</h2>
+        <div class="cfg-sub">判卷请求最小间隔 / kylinbot 单发间隔，单位秒；两者都为压住网关限速</div>
+        <div class="cfg-grid" id="cfgMisc"></div>
+      </div>
+    </section>
+  </main>
+  <footer>麟阁 MemHall · 本地服务 127.0.0.1 · 证据可下钻 · <span id="ftVer" class="mono"></span></footer>
+</div>
+<div id="evOverlay" class="ev-overlay">
+  <div class="ev-card" id="evCard">
+    <div class="ev-head">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span class="mono" id="evCaseId" style="font-weight:600;font-size:14px"></span>
+        <span class="tag" id="evTag">证据下钻</span></div>
+      <button class="xbtn" id="evClose">×</button>
+    </div>
+    <div class="ev-body" id="evBody"></div>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="/static/gsap.min.js"></script>
+<script>
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let G=window.gsap||null;
+function whenLive(cb){
+  /* rAF 活性探测：首帧到达=正常动画环境；300ms 无帧（无头截图/后台标签/
+     rAF 冻结）则熄灭 GSAP（G=null），全部 if(G) 守卫自动转静态渲染——
+     否则 from() 动画会卡在 opacity:0 初态，页面 DOM 完整却画不出来。 */
+  if(!G){cb();return}
+  let done=false;
+  const go=()=>{if(!done){done=true;cb()}};
+  if(!window.requestAnimationFrame){G=null;cb();return}
+  window.requestAnimationFrame(go);
+  setTimeout(()=>{if(!done){done=true;G=null;cb()}},300);
+}
+const CAPS={persist:"长期保持",recall:"记忆调用",dynamic_update:"动态更新",
+  discriminate:"相近区分",boundary:"边界识别",reuse:"任务复用"};
+const VMETA={correct:["正确","ok"],omission:["遗漏","dim"],confusion:["混淆","warn"],
+  over_persist:["错误持久化","bad"],wrong_reuse:["错误复用","purple"],invalid_run:["无效","dim"]};
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct=x=>(x*100).toFixed(1)+"%";
+const fmtCap=k=>CAPS[k]||k;
+
+/* ---------- GSAP 动效 ---------- */
+function staggerIn(nodes,opts={}){
+  if(!G||!nodes.length){return}
+  G.from(nodes,{y:opts.y??14,opacity:0,duration:.38,
+    stagger:opts.stagger??.05,ease:"power2.out",overwrite:"auto"});
+}
+function popIn(nodes){
+  if(!G||!nodes.length){return}
+  G.from(nodes,{scale:.9,opacity:0,duration:.32,ease:"back.out(1.7)",stagger:.04});
+}
+function countUp(el,val,fmt){
+  if(!G){el.textContent=fmt(val);return}
+  const o={v:0};
+  G.to(o,{v:val,duration:1.0,ease:"power2.out",
+    onUpdate:()=>{el.textContent=fmt(o.v)}});
+}
+function toast(msg){
+  const t=$("#toast");t.textContent=msg;
+  if(!G){t.style.opacity=1;t.style.transform="translateX(-50%)";setTimeout(()=>{t.style.opacity=0},2200);return}
+  G.killTweensOf(t);
+  G.timeline().to(t,{opacity:1,y:0,x:"-50%",duration:.3,ease:"power3.out"})
+    .to(t,{opacity:0,y:60,duration:.35,ease:"power2.in",delay:1.8});
+}
+function animBars(wrap,caps){
+  wrap.innerHTML=Object.entries(caps).map(([k,v])=>`
+    <div class="capbar"><span>${fmtCap(k)}</span>
+      <span class="track"><i data-w="${v}"></i></span><span class="v">${pct(v)}</span></div>`).join("");
+  const bars=wrap.querySelectorAll(".track i");
+  if(!G){bars.forEach(b=>b.style.width=(b.dataset.w*100)+"%");return}
+  G.to(bars,{width:(i,el)=>(+el.dataset.w*100)+"%",duration:.8,ease:"power3.out",stagger:.06});
+}
+/* rAF 冻结兜底：无头截图/深度后台标签里 GSAP ticker 停摆，from() 动画会永远停在
+   opacity:0 初态导致整页不可见。定时器不依赖 rAF——动画 2.5s 无推进即强制置终态。 */
+if(G){
+  let _rafLast=-1,_rafStuck=0;
+  setInterval(()=>{
+    const t=G.globalTimeline.time();
+    _rafStuck=(t===_rafLast)?_rafStuck+1:0;_rafLast=t;
+    if(_rafStuck>=5){
+      G.globalTimeline.getChildren(true,true,true).forEach(ch=>{try{ch.progress(1)}catch(e){}});
+      _rafStuck=0;
+    }
+  },500);
+}
+
+/* ---------- Tab ---------- */
+const ink=$("#navInk");
+function moveInk(btn){if(!G){return}
+  G.to(ink,{x:btn.offsetLeft,width:btn.offsetWidth,duration:.4,ease:"back.out(1.6)"});}
+function initInk(){const b=$('#nav button.on');
+  ink.style.width=b.offsetWidth+"px";
+  ink.style.transform="translateX("+(b.offsetLeft)+"px)";}
+function switchTab(name){
+  $$('#nav button').forEach(b=>b.classList.toggle("on",b.dataset.tab===name));
+  $$(".tab").forEach(s=>s.classList.toggle("on",s.id==="tab-"+name));
+  moveInk($(`#nav button[data-tab="${name}"]`));
+  const sec=$("#tab-"+name);
+  if(G){G.fromTo(sec.querySelectorAll(".card"),{y:14,opacity:0},
+    {y:0,opacity:1,duration:.38,ease:"power2.out",stagger:.06,overwrite:true});}
+  if(name==="doctor"&&!doctorLoaded){loadDoctor();}
+  if(name==="report"){loadRuns();}
+  if(name==="config"&&!cfgLoaded){loadConfig();}
+}
+$$("#nav button").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
+const _h=location.hash.slice(1);
+if(_h&&$("#tab-"+_h))switchTab(_h);
+
+/* ---------- 体检 ---------- */
+let doctorLoaded=false,agentNames=null;
+const FALLBACK_NAMES=["claude-code","codex","dsh","gemini-cli","opencode","mimocode",
+  "qwen-code","qwenpaw","zcode","pi","grok-build","workbuddy","kimi","kiro","cursor-agent",
+  "copilot-cli","codebuddy","openclaw","qoder","qoderwork","qwenwork","aider","goose",
+  "crush","hermes","kylin-bot","cline","continue","lingma","trae","marscode","kilocode"];
+async function loadAgentNames(){
+  if(agentNames)return;
+  try{agentNames=(await api("/api/agents")).names;}catch{agentNames=FALLBACK_NAMES;}
+}
+const actBadge=(d)=>{
+  if(d==null)return "";
+  if(d===0)return '<span class="tag act">今天活跃</span>';
+  if(d<=7)return `<span class="tag act">${d} 天前活跃</span>`;
+  if(d<=30)return `<span class="tag">${d} 天前</span>`;
+  return `<span class="tag idle">闲置 ${d} 天</span>`;
+};
+const cardRow=(f)=>`
+  <div class="mini ${f.found?"":"ghost"}">${f.found?'<i class="shine"></i>':""}
+    <div class="name"><span class="dot ${f.found?"y":"n"}"></span>${esc(f.name)}
+      ${f.adapter?`<span class="tag">-a ${esc(f.adapter)}</span>`:
+        f.found?`<span class="tag">可定制</span>`:""}${actBadge(f.activity_days)}</div>
+    <div class="meta">${f.found?esc((f.version?f.version+" · ":"")+(f.detail||"")+(f.hint?" · "+f.hint:"")):"未检出"}</div>
+  </div>`;
+const envRow=(c)=>`
+  <div class="envrow"><span class="n">${esc(c.name)}</span>
+    <span class="pill ${c.ok?"ok":"warn"}">${c.ok?"通过":"未就绪"}</span>
+    <span class="d">${esc(c.detail||"")}</span></div>`;
+function scanRig(kind,label){
+  const glyph=kind==="local"
+    ?'<div class="radar"><i class="beam"></i><i class="ring"></i><i class="ring r2"></i><b class="core"></b></div>'
+    :kind==="vm"
+    ?'<div class="wire"><i class="node"></i><span class="path"><i class="pkt"></i><i class="pkt p2"></i><i class="pkt p3"></i></span><i class="node"></i></div>'
+    :'<div class="leds"><i></i><i></i><i></i></div>';
+  return `<div class="scanrig">${glyph}<div class="scaninfo">
+    <div class="scanline">${label}</div>
+    <div class="ticker"><span class="cur"></span></div>
+    <div class="scanbar"><i></i></div></div></div>`;
+}
+function startTicker(box,kind){
+  const envNames=["LLM 网关","SSH 通道","密钥配置"];
+  let i=0;
+  const tick=()=>{
+    const names=agentNames||FALLBACK_NAMES;
+    i=(i+1)%names.length;
+    const t=box.querySelector(".cur");if(!t)return;
+    t.textContent=kind==="local"?`which ${names[i]} · ${names[i]} --version`
+      :kind==="vm"?`ssh 评测机 · 探测 ${names[i]}`
+      :`检查 ${envNames[i%3]}…`;
+    if(G){G.fromTo(t,{y:9,opacity:0},{y:0,opacity:1,duration:.16,ease:"power1.out",overwrite:true});}
+  };
+  tick();
+  return setInterval(tick,430);
+}
+function renderNotFoundWrap(box,missed){
+  if(!missed.length){box.innerHTML="";return}
+  box.innerHTML=`<details style="margin-top:8px"><summary style="cursor:pointer;
+    color:var(--faint);font-size:12.5px;user-select:none">未检出 ${missed.length} 项（点击展开名单）</summary>
+    <div style="margin-top:8px;color:var(--faint);font-size:12px;line-height:2">${missed.map(esc).join(" · ")}</div></details>`;
+}
+async function loadDoctor(fresh=false){
+  const body=$("#docBody");
+  doctorLoaded=true;
+  loadAgentNames();
+  const btn=$("#docRefresh");btn.disabled=true;btn.classList.add("scanning");
+  body.innerHTML=`
+    <h2.sec>本机智能体<span class="found-badge" id="nLocal" style="display:none"><b>0</b><small>个在册</small></span></h2>
+    <div class="grid-cards" id="dgLocal"></div><div id="dgMissed"></div><div id="dgExtras"></div>
+    <div id="dgVmSec"><h2.sec>评测机智能体（openKylin VM）<span class="found-badge" id="nVm" style="display:none"><b>0</b><small>个在册</small></span></h2>
+    <div class="grid-cards" id="dgVm"></div></div>
+    <h2.sec>评测环境就绪度</h2><div id="dgEnv"></div>
+    <div class="actionbar" id="dgBar" style="display:none">
+      <span class="hint" id="dgHint"></span>
+      <button class="ghostbtn" id="docGoRun" style="color:var(--acc-ink);border-color:var(--acc-line)">开始评测 →</button>
+    </div>`;
+  const secs={local:$("#dgLocal"),vm:$("#dgVm"),env:$("#dgEnv")};
+  for(const[k,el]of Object.entries(secs)){
+    el.innerHTML=scanRig(k,
+      k==="local"?'正在扫描本机 <b>PATH · 配置目录 · 版本号</b>'
+      :k==="vm"?'正在 <b>SSH</b> 探测评测机（openKylin VM）'
+      :'正在检查 <b>网关 · SSH · 密钥</b> 就绪度');
+    el._tick=startTicker(el,k);
+  }
+  const stopTick=k=>{const el=secs[k];if(el&&el._tick){clearInterval(el._tick);el._tick=null;}};
+  const results={};
+  const done=async(key,promise,render)=>{
+    try{results[key]=await promise;render(results[key]);}
+    catch(e){
+      const msg=e.status===404
+        ?"接口 404——服务端进程还是旧代码而页面已是新版，重启 memhall ui（Ctrl+C 后重新运行）即可"
+        :e.message;
+      try{render({error:msg});}catch{}
+    }
+  };
+  const badge=(id,n)=>{
+    const b=$(id);if(!b)return;
+    b.style.display="inline-flex";
+    const num=b.querySelector("b");
+    if(!G){num.textContent=n;return}
+    G.fromTo(b,{scale:.4,opacity:0,rotate:-8},{scale:1,opacity:1,rotate:0,duration:.5,ease:"back.out(2.2)"});
+    countUp(num,n,v=>String(Math.round(v)));
+  };
+  const revealCards=(box)=>{
+    if(!G)return;
+    G.from(box.querySelectorAll(".mini"),{y:16,opacity:0,scale:.94,duration:.4,ease:"back.out(1.5)",stagger:.04});
+    G.fromTo(box.querySelectorAll(".mini .shine"),{xPercent:-130,opacity:1},
+      {xPercent:260,duration:.65,ease:"power1.inOut",stagger:.045,delay:.18});
+    G.fromTo(box.querySelectorAll(".dot.y"),{scale:0},
+      {scale:1,duration:.55,ease:"elastic.out(1,.45)",stagger:.045,delay:.12});
+  };
+  const pLocal=done("local",api(`/api/doctor/local${fresh?"?fresh=1":""}`),(d)=>{
+    const box=$("#dgLocal");stopTick("local");
+    if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    const isAgent=f=>f.category==="cli"||f.category==="ide";
+    const found=d.local.filter(f=>f.found&&isAgent(f)),
+          missed=d.local.filter(f=>!f.found),
+          extras=d.local.filter(f=>f.found&&!isAgent(f));
+    badge("#nLocal",found.length);
+    box.innerHTML=found.map(cardRow).join("");
+    revealCards(box);
+    renderNotFoundWrap($("#dgMissed"),missed.map(f=>f.name));
+    $("#dgExtras").innerHTML=extras.length
+      ?`<div style="margin-top:10px;font-size:12.5px;color:var(--sub);padding:2px 2px 0">另检出（非智能体）：${extras.map(f=>`<b style="color:var(--ink)">${esc(f.name)}</b>（${esc(f.hint||"周边工具")}）`).join(" · ")}</div>`
+      :"";});
+  const pVm=done("vm",api("/api/doctor/vm"),(d)=>{
+    const box=$("#dgVm");stopTick("vm");
+    if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    if(d.same){$("#dgVmSec").innerHTML=`<div class="empty" style="padding:10px 2px">openKylin 原生模式：本机即评测机，原生智能体（hermes · kylin-bot 等）已并入上方本机扫描</div>`;return}
+    if(d.vm_error){box.innerHTML=`<div class="empty">${esc(d.vm_error)}</div>`;return}
+    if(!d.vm.length){box.innerHTML='<div class="empty">评测机未发现智能体</div>';return}
+    badge("#nVm",d.vm.length);
+    box.innerHTML=d.vm.map(cardRow).join("");
+    revealCards(box);});
+  const pEnv=done("env",api("/api/doctor/env"),(d)=>{
+    const box=$("#dgEnv");stopTick("env");
+    if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    box.innerHTML=d.env.map(envRow).join("");
+    if(G){
+      G.from(box.querySelectorAll(".envrow"),{x:-12,opacity:0,duration:.3,stagger:.05,ease:"power2.out"});
+      popIn(box.querySelectorAll(".envrow .pill"));
+      box.querySelectorAll(".envrow").forEach((r,i)=>{
+        if(!d.env[i].ok){G.fromTo(r,{x:0},{x:5,duration:.05,repeat:5,yoyo:true,ease:"none",delay:.4+i*.08});}});
+    }});
+  try{
+    await Promise.all([pLocal,pVm,pEnv]);
+    const usable=["mock",...new Set([...(results.local?.local||[]),...(results.vm?.vm||[])]
+      .filter(f=>f.found&&f.adapter).map(f=>f.adapter))];
+    const nFound=(results.local?.local||[])
+      .filter(f=>f.found&&(f.category==="cli"||f.category==="ide")).length;
+    $("#dgHint").innerHTML=`本机发现 <b>${nFound}</b> 个智能体 · 可用适配器 <b>${usable.join(" · ")}</b>　<span style="color:var(--faint);font-size:12px">版本信息缓存 12h，「重新体检」强制刷新</span>`;
+    const bar=$("#dgBar");bar.style.display="flex";
+    const go=$("#docGoRun");
+    if(go){go.addEventListener("click",()=>switchTab("run"));}
+    if(G){G.fromTo(bar,{y:10,opacity:0},{y:0,opacity:1,duration:.35,ease:"power2.out"});}
+  }finally{
+    ["local","vm","env"].forEach(stopTick);
+    btn.disabled=false;btn.classList.remove("scanning");
+  }
+}
+$("#docRefresh").addEventListener("click",()=>loadDoctor(true));
+
+/* ---------- 评测 ---------- */
+async function loadCaseDirs(){
+  try{const d=await api("/api/case-dirs");
+    $("#fCases").innerHTML=d.dirs.map(x=>`<option>${esc(x)}</option>`).join("");
+  }catch(e){$("#fCases").innerHTML='<option>cases/full</option>';}
+}
+function logLine(cls,msg,title){
+  const c=$("#console");
+  const t=new Date().toTimeString().slice(0,8);
+  const div=document.createElement("div");
+  div.innerHTML=`<span class="t">${t}</span><span class="${cls}"${title?` title="${esc(title)}"`:""}>${esc(msg)}</span>`;
+  c.appendChild(div);
+  if(G){G.from(div,{y:6,opacity:0,duration:.22,ease:"power2.out"});}
+  c.scrollTop=c.scrollHeight;
+}
+let es=null, pendingRunId=null;
+$("#btnStart").addEventListener("click",async()=>{
+  const body={adapter:$("#fAdapter").value,cases:$("#fCases").value,judge:$("#fJudge").value};
+  try{await api("/api/start",{method:"POST",body:JSON.stringify(body)})}
+  catch(e){
+    if(e.status===409){toast("已有评测在跑");}else{toast("启动失败："+e.message);}return}
+  $("#btnStart").disabled=true;$("#btnStop").disabled=false;
+  $("#resultCard").style.display="none";
+  $("#progLabel").textContent="启动中…";$("#progCount").textContent="";
+  if(G){G.to("#progBar",{width:"2%",duration:.4});}else{$("#progBar").style.width="2%"}
+  if(es){es.close()}
+  es=new EventSource("/api/events");
+  es.onmessage=(ev)=>{
+    const m=JSON.parse(ev.data);
+    if(m.type==="start"){logLine("lv-start",`开始评测：${m.adapter} × ${m.cases}（${m.n_cases} 用例，${m.judge==="dual"?"LLM 判卷":"脚本判卷"}）`);}
+    else if(m.type==="case_start"){logLine("lv-casehead",`——【${m.i}/${m.n}】${m.case} ——`);}
+    else if(m.type==="ask"){
+      const tag=m.phase==="probe"?"考":m.phase==="inject"?"教":"扰";
+      logLine(m.phase==="probe"?"lv-ask":"lv-ask-dim",`${tag}｜${m.q}`);
+    }
+    else if(m.type==="reply"){
+      const dim=m.phase!=="probe";
+      const a=m.a.length>200?m.a.slice(0,200)+"…":m.a;
+      logLine(dim?"lv-reply-dim":"lv-reply",`答｜${a}（${(m.ms/1000).toFixed(1)}s）`,
+              m.a+(m.ms?`\n[${(m.ms/1000).toFixed(1)}s]`:""));
+    }
+    else if(m.type==="memory"){logLine("lv-mem",`记忆快照：${m.n} 条${m.final?"（本例终态）":""}`);}
+    else if(m.type==="err"){logLine("lv-error",`运行错误：${m.msg}`);}
+    else if(m.type==="case"){
+      logLine("lv-case",`[${m.i}/${m.n}] ${m.case} 完成`);
+      $("#progLabel").textContent=`${m.case}`;
+      $("#progCount").textContent=`${m.i} / ${m.n}`;
+      const w=(m.i/m.n*100).toFixed(1)+"%";
+      if(G){G.to("#progBar",{width:w,duration:.45,ease:"power2.out"});}else{$("#progBar").style.width=w}
+    }
+    else if(m.type==="phase"){logLine("lv-phase",m.msg);}
+    else if(m.type==="done"){
+      pendingRunId=m.run_id;
+      logLine("lv-done",`完成：总体正确率 ${pct(m.score)}（有效 ${m.n_valid}/${m.n_total}）`);
+      if(G){G.to("#progBar",{width:"100%",duration:.55,ease:"power3.out"});}else{$("#progBar").style.width="100%"}
+      $("#progLabel").textContent="评测完成";
+      showResult(m);finishRun();
+    }
+    else if(m.type==="stopped"){logLine("lv-stopped",m.msg);finishRun();}
+    else if(m.type==="error"){logLine("lv-error",m.msg);finishRun();}
+  };
+});
+$("#btnStop").addEventListener("click",async()=>{
+  await api("/api/stop",{method:"POST"});logLine("lv-stopped","已请求停止（当前用例完成后生效）");
+  $("#btnStop").disabled=true;
+});
+function finishRun(){$("#btnStart").disabled=false;$("#btnStop").disabled=true;
+  if(es){es.close();es=null;}}
+function showResult(m){
+  const rc=$("#resultCard");rc.style.display="block";
+  $("#resValid").textContent=`有效 ${m.n_valid} / ${m.n_total} 探测点`;
+  countUp($("#resScore"),m.score,v=>pct(v));
+  animBars($("#resCaps"),m.caps);
+  if(G){G.fromTo(rc,{y:16,opacity:0},{y:0,opacity:1,duration:.45,ease:"power2.out"});
+    G.fromTo("#resScore",{scale:1.1},{scale:1,duration:.5,ease:"back.out(2)",delay:.45});}
+}
+$("#btnToReport").addEventListener("click",()=>{switchTab("report")});
+
+/* ---------- 报告 ---------- */
+let compareSel=[];
+async function loadRuns(){
+  const list=$("#runsList");
+  try{
+    const d=await api("/api/runs");
+    if(!d.runs.length){list.innerHTML='<div class="empty">还没有运行记录——去「评测」页跑一轮。</div>';return}
+    list.innerHTML=`<table class="runs-table"><thead><tr>
+      <th style="width:34px"></th><th>run_id</th><th>适配器</th><th>总体</th><th>有效</th></tr></thead>
+      <tbody>${d.runs.map(r=>`
+        <tr class="row" data-id="${esc(r.run_id)}" data-adapter="${esc(r.adapter)}">
+          <td><input type="checkbox" class="cmpck" data-id="${esc(r.run_id)}" data-adapter="${esc(r.adapter)}"
+            ${compareSel.includes(r.run_id)?"checked":""}></td>
+          <td class="mono runid">${esc(r.run_id)}</td>
+          <td><span class="tag">${esc(r.adapter)}</span></td>
+          <td><b>${r.score==null?"—":pct(r.score)}</b></td>
+          <td style="color:var(--sub)">${r.n_valid==null?"—":`${r.n_valid}/${r.n_total}`}</td></tr>`).join("")}
+      </tbody></table>`;
+    staggerIn(list.querySelectorAll("tr.row"),{y:8,stagger:.03});
+    list.querySelectorAll("tr.row").forEach(tr=>tr.addEventListener("click",e=>{
+      if(e.target.closest(".cmpck"))return;
+      selectRun(tr.dataset.id);}));
+    list.querySelectorAll(".cmpck").forEach(ck=>ck.addEventListener("change",onCompareTick));
+    updateCompareBar();
+    if(pendingRunId){selectRun(pendingRunId);pendingRunId=null;}
+  }catch(e){list.innerHTML=`<div class="empty">加载失败：${esc(e.message)}</div>`;}
+}
+$("#runsRefresh").addEventListener("click",loadRuns);
+function onCompareTick(e){
+  const id=e.target.dataset.id;
+  if(e.target.checked){compareSel.push(id);
+    if(compareSel.length>2){const drop=compareSel.shift();
+      const ck=$(`.cmpck[data-id="${CSS.escape(drop)}"]`);if(ck)ck.checked=false;}}
+  else{compareSel=compareSel.filter(x=>x!==id);}
+  updateCompareBar();
+}
+function updateCompareBar(){
+  const bar=$("#compareBar");
+  bar.style.display=compareSel.length===2?"flex":"none";
+  if(compareSel.length===2){
+    const names=compareSel.map(id=>{
+      const tr=$(`tr.row[data-id="${CSS.escape(id)}"]`);
+      return tr?tr.dataset.adapter:id;}).join(" vs ");
+    $("#cmpNames").textContent=names;
+    popIn(bar);
+  }
+}
+$("#btnCompare").addEventListener("click",()=>{
+  const img=$("#rdRadar");
+  img.src=`/api/compare?runs=${encodeURIComponent(compareSel.join(","))}&t=${Date.now()}`;
+  $("#reportDetail").style.display="block";
+  if(G){G.fromTo(img,{opacity:0,scale:.97},{opacity:1,scale:1,duration:.5,ease:"power2.out"});}
+});
+let vFilter="all";
+async function selectRun(runId){
+  currentRunId=runId;
+  compareSel=[];$$(".cmpck").forEach(c=>c.checked=false);updateCompareBar();
+  $$("#runsList tr.row").forEach(tr=>tr.classList.toggle("sel",tr.dataset.id===runId));
+  const det=$("#reportDetail");
+  try{
+    const d=await api(`/api/runs/${encodeURIComponent(runId)}/data`);
+    det.style.display="block";
+    $("#rdRunId").textContent=runId;
+    $("#rdAdapter").textContent=d.metrics.adapter||"?";
+    countUp($("#rdScore"),d.metrics.overall_score,v=>pct(v));
+    animBars($("#rdCaps"),d.metrics.capability_scores);
+    $("#rdRadar").src=`/api/runs/${encodeURIComponent(runId)}/radar?t=${Date.now()}`;
+    renderVerdicts(d.verdicts);
+    if(G){
+      G.fromTo(det,{y:12,opacity:0},{y:0,opacity:1,duration:.42,ease:"power2.out"});
+      G.fromTo("#rdRadar",{opacity:0,scale:.97},{opacity:1,scale:1,duration:.5,delay:.08,ease:"power2.out"});
+    }
+    det.scrollIntoView({behavior:"smooth",block:"start"});
+  }catch(e){toast("读取失败："+e.message);}
+}
+function renderVerdicts(vs){
+  const counts={};
+  vs.forEach(v=>{const k=VMETA[v.verdict]?.[0]||v.verdict;counts[k]=(counts[k]||0)+1;});
+  const chips=[["all",`全部 ${vs.length}`],
+    ...Object.entries(counts).map(([k,n])=>[k,`${k} ${n}`])];
+  $("#vChips").innerHTML=chips.map(([k,label])=>
+    `<span class="chip ${k===vFilter?"on":""}" data-k="${esc(k)}">${esc(label)}</span>`).join("");
+  $$("#vChips .chip").forEach(c=>c.addEventListener("click",()=>{
+    vFilter=c.dataset.k;renderVerdicts(vs);
+    if(G){G.fromTo("#vBody tr",{opacity:0,y:5},{opacity:1,y:0,duration:.25,stagger:.015,ease:"power2.out"});}
+  }));
+  const rows=vs.filter(v=>vFilter==="all"||(VMETA[v.verdict]?.[0])===vFilter);
+  $("#vBody").innerHTML=rows.map(v=>{
+    const [label,cls]=VMETA[v.verdict]||[v.verdict,"dim"];
+    return `<tr class="vrow" data-case="${esc(v.case_id||"")}" title="点击查看该用例完整问答证据">
+      <td class="mono" style="font-size:12px">${esc(v.probe_id)}</td>
+      <td style="font-size:12.5px">${esc(v.case_id||"")}</td>
+      <td><span class="pill ${cls}">${label}</span></td>
+      <td style="font-size:12px;color:var(--sub)">${esc(v.decided_by||"")}</td>
+      <td class="exp" style="font-size:12.5px">${esc((v.explanation||"").slice(0,120))}</td></tr>`;}).join("");
+  $$("#vBody tr.vrow").forEach(tr=>tr.addEventListener("click",()=>{
+    if(tr.dataset.case){openCase(tr.dataset.case);}}));
+  popIn($("#vBody").querySelectorAll(".pill"));
+}
+
+/* ---------- 证据下钻 ---------- */
+const PHASE_ZH={inject:"教 · 注入",confound:"隔 · 干扰",probe:"考 · 探测"};
+let currentRunId=null;
+async function openCase(caseId){
+  if(!currentRunId){toast("先选择一次运行");return}
+  const body=$("#evBody"),ov=$("#evOverlay");
+  body.innerHTML='<div class="empty"><span class="spin"></span> 读取证据…</div>';
+  $("#evCaseId").textContent=caseId;
+  ov.classList.add("on");
+  if(G){G.fromTo(ov,{opacity:0},{opacity:1,duration:.25});
+    G.fromTo("#evCard",{y:26,opacity:0,scale:.98},
+      {y:0,opacity:1,scale:1,duration:.4,ease:"power3.out"});}
+  try{
+    const d=await api(`/api/runs/${encodeURIComponent(currentRunId)}/case/${encodeURIComponent(caseId)}/evidence`);
+    renderEvidence(d);
+  }catch(e){body.innerHTML=`<div class="empty">读取失败：${esc(e.message)}</div>`;}
+}
+function closeCase(){
+  const ov=$("#evOverlay");
+  if(!ov.classList.contains("on")){return}
+  const done=()=>ov.classList.remove("on");
+  if(G){G.to(ov,{opacity:0,duration:.22,onComplete:done});}else{done();}
+}
+function renderEvidence(d){
+  const body=$("#evBody");
+  let h="";
+  for(const p of d.phases){
+    h+=`<div class="phase-h"><span class="phase-chip">${PHASE_ZH[p.name]||p.name}</span>
+      ${p.clock_days?`<span class="clock-badge">时钟 +${p.clock_days} 天</span>`:""}</div>`;
+    for(const t of p.turns){
+      h+=`<div class="turn">
+        <span class="who">用户</span><div class="u">${esc(t.user)}</div>
+        <span class="who">智能体</span><div class="a">${esc(t.reply||"（无回复）")}</div>
+        ${t.latency_ms?`<span class="lat">${(t.latency_ms/1000).toFixed(1)}s</span>`:""}
+      </div>`;
+    }
+  }
+  if(!d.phases.length){h+='<div class="empty">无对话证据</div>';}
+  if(d.memories.length){
+    h+=`<h2.sec>记忆快照</h2>`;
+    for(const m of d.memories){
+      h+=`<div class="memsec"><span class="tag">${PHASE_ZH[m.phase]||m.phase} 后</span>
+        <div class="memlist">${m.entries.length?m.entries.map(e=>`<div>${esc(e)}</div>`).join("")
+          :'<div style="color:var(--faint)">（空，未写入）</div>'}</div></div>`;
+    }
+  }
+  if(d.fs_created.length){
+    h+=`<h2.sec>文件系统新增</h2><div class="fslist">${d.fs_created.map(p=>`<span>${esc(p)}</span>`).join("")}</div>`;
+  }
+  if(d.actions.length){
+    h+=`<h2.sec>工具动作</h2><div class="memlist">${d.actions.map(a=>`<div>${esc(a.tool)} → ${esc(a.result)}</div>`).join("")}</div>`;
+  }
+  body.innerHTML=h;
+  if(G){G.from(body.querySelectorAll(".turn"),{y:10,opacity:0,duration:.3,stagger:.04,ease:"power2.out"});
+    popIn(body.querySelectorAll(".phase-chip,.clock-badge"));}
+}
+$("#evClose").addEventListener("click",closeCase);
+$("#evOverlay").addEventListener("click",e=>{if(e.target===$("#evOverlay")){closeCase();}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeCase();}});
+
+/* ---------- 配置 ---------- */
+let cfgLoaded=false;
+const CFG_GROUPS=[
+  ["cfgVM",/^VM_/],["cfgJudge",/^JUDGE_(A|B)_/],["cfgMisc",/^(KYLINBOT_SEND_INTERVAL|JUDGE_MIN_INTERVAL)$/]];
+async function loadConfig(){
+  try{
+    const d=await api("/api/config");cfgLoaded=true;
+    $("#cfgPath").textContent=d.env_path;
+    for(const[grid,re]of CFG_GROUPS){
+      const box=$("#"+grid);
+      const items=d.items.filter(i=>re.test(i.key));
+      box.innerHTML=items.map(i=>`
+        <div class="cfg-item"><label>${esc(i.key)} ${i.set&&!i.value?'<span class="pill ok" style="font-size:10.5px">已设置</span>':""}</label>
+          <input type="${["VM_PASS","AGENT_LLM_KEY","JUDGE_A_KEY","JUDGE_B_KEY"].includes(i.key)?"password":"text"}"
+            data-k="${esc(i.key)}" value="${esc(i.value)}"
+            placeholder="${i.set&&!i.value?"留空保持不变":""}"></div>`).join("");
+    }
+    staggerIn($$(".cfg-item"),{y:10,stagger:.03});
+  }catch(e){toast("配置读取失败："+e.message);}
+}
+$("#btnSaveCfg").addEventListener("click",async()=>{
+  const updates={};
+  $$(".cfg-item input").forEach(inp=>{
+    if(inp.value.trim()){updates[inp.dataset.k]=inp.value.trim();}});
+  if(!Object.keys(updates).length){toast("没有改动");return}
+  try{
+    const r=await api("/api/config",{method:"POST",body:JSON.stringify({updates})});
+    toast(`已保存 ${r.saved} 项到 .env`);loadConfig();
+  }catch(e){toast("保存失败："+e.message);}
+});
+
+/* ---------- 通用 ---------- */
+async function api(url,opts={}){
+  const r=await fetch(url,{headers:{"Content-Type":"application/json"},...opts});
+  if(!r.ok){let m=r.statusText;try{m=(await r.json()).detail||m}catch{}throw Object.assign(new Error(m),{status:r.status});}
+  return r.json();
+}
+
+/* ---------- 启动 ---------- */
+window.addEventListener("load",()=>{
+  whenLive(()=>{
+    initInk();
+    if(G){G.timeline()
+      .from(".brand",{y:-14,opacity:0,duration:.45,ease:"power2.out"})
+      .from("#nav",{y:-10,opacity:0,duration:.4,ease:"power2.out"}, "-=.2")
+      .from("#tab-doctor .card",{y:16,opacity:0,duration:.45,ease:"power2.out"}, "-=.18");
+    }
+    loadDoctor();loadCaseDirs();
+    api("/api/meta").then(d=>{$("#ftVer").textContent="服务端 v"+d.version+" · py"+d.python;}).catch(()=>{});
+  });
+});
+if(document.fonts&&document.fonts.ready){
+  document.fonts.ready.then(()=>{initInk();});}
+window.addEventListener("resize",()=>{const b=$('#nav button.on');if(b)initInk();});
+</script>
+</body>
+</html>

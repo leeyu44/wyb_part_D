@@ -1,6 +1,6 @@
 [project]
 name = "memhall"
-version = "0.1.0"
+version = "0.2.1"
 description = "麟阁 MemHall —— 面向 openKylin 生态的智能体记忆能力评测基准"
 authors = [{ name = "MemHall Team" }]
 readme = "README.md"
@@ -10,6 +10,9 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "matplotlib>=3.8",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.54.0",
+    "pywebview>=5.0; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -26,4 +29,5 @@ default-groups = []
 dev = [
     "paramiko>=5.0.0",
     "pytest>=9.1.1",
+    "pyinstaller>=6.10",
 ]
