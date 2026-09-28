@@ -69,27 +69,39 @@ VM_AGENTS: list[tuple[str, list[str], str]] = [
 ]
 
 
-def scan_local(timeout_s: int = 5) -> list[Finding]:
+def scan_local(timeout_s: int = 3) -> list[Finding]:
     import subprocess
+    from concurrent.futures import ThreadPoolExecutor
     out: list[Finding] = []
+    hits: list[tuple[Finding, str]] = []   # (finding, exe)
     for name, bins, cfgs, adapter in LOCAL_AGENTS:
         exe = next((b for b in bins if shutil.which(b)), "")
         hit_cfg = next((c for c in cfgs
                         if Path(c).expanduser().exists()), "")
-        version = ""
-        if exe:
-            try:
-                r = subprocess.run([exe, "--version"], capture_output=True,
-                                   text=True, timeout=timeout_s)
-                version = (r.stdout or r.stderr).strip().splitlines()[0][:40] \
-                    if (r.stdout or r.stderr).strip() else ""
-            except (OSError, subprocess.TimeoutExpired):
-                pass
         if exe or hit_cfg:
-            out.append(Finding(name, "local", True, version,
-                               detail=exe or hit_cfg, adapter=adapter))
+            hits.append((Finding(name, "local", True,
+                                 detail=exe or hit_cfg, adapter=adapter), exe))
         else:
             out.append(Finding(name, "local", False))
+
+    # 版本是锦上添花：并行探测 + 短超时，慢 CLI（如本地 hermes --version 实测 11s）不等
+    def _ver(exe: str) -> str:
+        if not exe:
+            return ""
+        try:
+            r = subprocess.run([exe, "--version"], capture_output=True,
+                               text=True, timeout=timeout_s)
+            return ((r.stdout or r.stderr).strip().splitlines()[0][:40]
+                    if (r.stdout or r.stderr).strip() else "")
+        except (OSError, subprocess.TimeoutExpired, IndexError):
+            return ""
+
+    if hits:
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            versions = list(ex.map(_ver, [h[1] for h in hits]))
+        for (f, _), ver in zip(hits, versions):
+            f.version = ver
+            out.append(f)
     return out
 
 
@@ -166,10 +178,16 @@ def check_env() -> list[EnvCheck]:
 
 
 def run_doctor(scan_remote: bool = True) -> DoctorReport:
-    rep = DoctorReport(local=scan_local())
-    if scan_remote:
-        rep.vm, rep.vm_error = scan_vm()
-    rep.env = check_env()
+    """三路并行体检（local/vm/env 互不阻塞，墙钟≈最慢一路）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        fut_local = ex.submit(scan_local)
+        fut_vm = ex.submit(scan_vm) if scan_remote else None
+        fut_env = ex.submit(check_env)
+        rep = DoctorReport(local=fut_local.result())
+        if fut_vm is not None:
+            rep.vm, rep.vm_error = fut_vm.result()
+        rep.env = fut_env.result()
     return rep
 
 

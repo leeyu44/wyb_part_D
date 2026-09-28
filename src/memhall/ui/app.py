@@ -100,6 +100,25 @@ def create_app() -> FastAPI:
             "usable": rep.usable_adapters(),
         }
 
+    # 分段端点：前端并行拉取，逐段点亮（体检总时长≈最慢一段而非三段之和）
+    @app.get("/api/doctor/local")
+    async def doctor_local() -> dict:
+        from memhall.discovery import scan_local
+        rep = await asyncio.to_thread(scan_local)
+        return {"local": [asdict(f) for f in rep]}
+
+    @app.get("/api/doctor/vm")
+    async def doctor_vm() -> dict:
+        from memhall.discovery import scan_vm
+        vm, err = await asyncio.to_thread(scan_vm)
+        return {"vm": [asdict(f) for f in vm], "vm_error": err}
+
+    @app.get("/api/doctor/env")
+    async def doctor_env() -> dict:
+        from memhall.discovery import check_env
+        env = await asyncio.to_thread(check_env)
+        return {"env": [asdict(c) for c in env]}
+
     # ---------- 用例目录 ----------
     @app.get("/api/case-dirs")
     def case_dirs() -> dict:

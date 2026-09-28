@@ -411,38 +411,58 @@ $$("#nav button").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.
 
 /* ---------- 体检 ---------- */
 let doctorLoaded=false;
+const cardRow=(f)=>`
+  <div class="mini ${f.found?"":"ghost"}">
+    <div class="name"><span class="dot ${f.found?"y":"n"}"></span>${esc(f.name)}
+      ${f.adapter?`<span class="tag">-a ${esc(f.adapter)}</span>`:
+        f.found?`<span class="tag">可定制</span>`:""}</div>
+    <div class="meta">${f.found?esc((f.version?f.version+" · ":"")+(f.detail||"")+(f.hint?" · "+f.hint:"")):"未检出"}</div>
+  </div>`;
+const envRow=(c)=>`
+  <div class="envrow"><span class="n">${esc(c.name)}</span>
+    <span class="pill ${c.ok?"ok":"warn"}">${c.ok?"通过":"未就绪"}</span>
+    <span class="d">${esc(c.detail||"")}</span></div>`;
+function secPending(){return '<div class="empty"><span class="spin"></span> 探测中…</div>';}
 async function loadDoctor(){
   const body=$("#docBody");
-  body.innerHTML='<div class="empty"><span class="spin"></span> 探测中…</div>';
-  try{
-    const d=await api("/api/doctor");
-    doctorLoaded=true;
-    const cardRow=(f)=>`
-      <div class="mini ${f.found?"":"ghost"}">
-        <div class="name"><span class="dot ${f.found?"y":"n"}"></span>${esc(f.name)}
-          ${f.adapter?`<span class="tag">-a ${esc(f.adapter)}</span>`:
-            f.found?`<span class="tag">可定制</span>`:""}</div>
-        <div class="meta">${f.found?esc((f.version?f.version+" · ":"")+(f.detail||"")+(f.hint?" · "+f.hint:"")):"未检出"}</div>
-      </div>`;
-    const envRow=(c)=>`
-      <div class="envrow"><span class="n">${esc(c.name)}</span>
-        <span class="pill ${c.ok?"ok":"warn"}">${c.ok?"通过":"未就绪"}</span>
-        <span class="d">${esc(c.detail||"")}</span></div>`;
-    body.innerHTML=`
-      <h2.sec>本机智能体</h2><div class="grid-cards" id="dgLocal">${d.local.map(cardRow).join("")}</div>
-      <h2.sec>评测机智能体（openKylin VM）</h2>
-      ${d.vm_error?`<div class="empty">${esc(d.vm_error)}</div>`:
-        `<div class="grid-cards" id="dgVm">${d.vm.map(cardRow).join("")||'<div class="empty">未发现</div>'}</div>`}
-      <h2.sec>评测环境就绪度</h2><div>${d.env.map(envRow).join("")}</div>
-      <div class="actionbar">
-        <span class="hint">可用适配器 <b>${d.usable.join(" · ")}</b>，去评测页开跑</span>
-        <button class="ghostbtn" id="docGoRun" style="color:var(--acc-ink);border-color:var(--acc-line)">开始评测 →</button>
-      </div>`;
-    const go=$("#docGoRun");
-    if(go){go.addEventListener("click",()=>switchTab("run"));}
-    staggerIn(body.querySelectorAll(".mini"),{y:12,stagger:.04});
-    if(G){G.from(body.querySelectorAll(".envrow"),{x:-10,opacity:0,duration:.3,stagger:.05,ease:"power2.out"});}
-  }catch(e){body.innerHTML=`<div class="empty">体检失败：${esc(e.message)}</div>`;}
+  doctorLoaded=true;
+  body.innerHTML=`
+    <h2.sec>本机智能体</h2><div class="grid-cards" id="dgLocal">${secPending()}</div>
+    <h2.sec>评测机智能体（openKylin VM）</h2><div class="grid-cards" id="dgVm">${secPending()}</div>
+    <h2.sec>评测环境就绪度</h2><div id="dgEnv">${secPending()}</div>
+    <div class="actionbar" id="dgBar" style="display:none">
+      <span class="hint" id="dgHint"></span>
+      <button class="ghostbtn" id="docGoRun" style="color:var(--acc-ink);border-color:var(--acc-line)">开始评测 →</button>
+    </div>`;
+  const results={};
+  const done=async(key,promise,render)=>{
+    try{results[key]=await promise;render(results[key]);}
+    catch(e){render({error:e.message});}
+  };
+  const pLocal=done("local",api("/api/doctor/local"),(d)=>{
+    const box=$("#dgLocal");
+    if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    box.innerHTML=d.local.map(cardRow).join("")||'<div class="empty">未检出</div>';
+    staggerIn(box.querySelectorAll(".mini"),{y:12,stagger:.04});});
+  const pVm=done("vm",api("/api/doctor/vm"),(d)=>{
+    const box=$("#dgVm");
+    if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    if(d.vm_error){box.innerHTML=`<div class="empty">${esc(d.vm_error)}</div>`;return}
+    box.innerHTML=d.vm.map(cardRow).join("")||'<div class="empty">未发现</div>';
+    staggerIn(box.querySelectorAll(".mini"),{y:12,stagger:.04});});
+  const pEnv=done("env",api("/api/doctor/env"),(d)=>{
+    const box=$("#dgEnv");
+    if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    box.innerHTML=d.env.map(envRow).join("");
+    if(G){G.from(box.querySelectorAll(".envrow"),{x:-10,opacity:0,duration:.3,stagger:.05,ease:"power2.out"});}});
+  await Promise.all([pLocal,pVm,pEnv]);
+  const usable=["mock",...new Set([...(results.local?.local||[]),...(results.vm?.vm||[])]
+    .filter(f=>f.found&&f.adapter).map(f=>f.adapter))];
+  $("#dgHint").innerHTML=`可用适配器 <b>${usable.join(" · ")}</b>，去评测页开跑`;
+  const bar=$("#dgBar");bar.style.display="flex";
+  const go=$("#docGoRun");
+  if(go){go.addEventListener("click",()=>switchTab("run"));}
+  if(G){G.fromTo(bar,{y:10,opacity:0},{y:0,opacity:1,duration:.35,ease:"power2.out"});}
 }
 $("#docRefresh").addEventListener("click",loadDoctor);
 
