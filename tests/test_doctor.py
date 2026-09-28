@@ -75,6 +75,13 @@ def test_dsh_sentinel_and_extras_category(monkeypatch, tmp_path):
     assert all(f.name != "ollama" for f in agents)
 
 
+def test_activity_days(tmp_path):
+    import memhall.discovery as disc
+    (tmp_path / "x").mkdir()
+    assert disc._activity_days([str(tmp_path / "x")]) == 0
+    assert disc._activity_days([str(tmp_path / "nope")]) is None
+
+
 def test_scan_vm_same_machine(monkeypatch):
     """openKylin 原生模式：VM_HOST 指向本机时不做远端探测，直接并段。"""
     import memhall.discovery as disc

@@ -79,6 +79,8 @@ h2.sec::before{content:"";width:3px;height:12px;border-radius:2px;background:var
 .dot.n{background:var(--line)}
 .tag{font-size:11.5px;font-family:var(--mono);color:var(--sub);
   border:1px solid var(--line);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.tag.act{color:var(--ok);border-color:#bbe7c9;background:var(--ok-soft)}
+.tag.idle{color:var(--faint)}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;
   padding:2px 9px;border-radius:6px;font-weight:600;white-space:nowrap;
   font-family:var(--sans);line-height:1.6}
@@ -494,11 +496,18 @@ async function loadAgentNames(){
   if(agentNames)return;
   try{agentNames=(await api("/api/agents")).names;}catch{agentNames=FALLBACK_NAMES;}
 }
+const actBadge=(d)=>{
+  if(d==null)return "";
+  if(d===0)return '<span class="tag act">今天活跃</span>';
+  if(d<=7)return `<span class="tag act">${d} 天前活跃</span>`;
+  if(d<=30)return `<span class="tag">${d} 天前</span>`;
+  return `<span class="tag idle">闲置 ${d} 天</span>`;
+};
 const cardRow=(f)=>`
   <div class="mini ${f.found?"":"ghost"}">${f.found?'<i class="shine"></i>':""}
     <div class="name"><span class="dot ${f.found?"y":"n"}"></span>${esc(f.name)}
       ${f.adapter?`<span class="tag">-a ${esc(f.adapter)}</span>`:
-        f.found?`<span class="tag">可定制</span>`:""}</div>
+        f.found?`<span class="tag">可定制</span>`:""}${actBadge(f.activity_days)}</div>
     <div class="meta">${f.found?esc((f.version?f.version+" · ":"")+(f.detail||"")+(f.hint?" · "+f.hint:"")):"未检出"}</div>
   </div>`;
 const envRow=(c)=>`

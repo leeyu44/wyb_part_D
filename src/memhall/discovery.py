@@ -40,6 +40,7 @@ class Finding:
     adapter: str = ""          # 对应 memhall run -a <name>；空 = 无适配器
     hint: str = ""
     category: str = "cli"      # cli / ide = 智能体；runtime / tool = 周边信号，非智能体
+    activity_days: int | None = None  # 最近活动（天前）；None = 无目录证据可考
 
 
 @dataclass
@@ -187,6 +188,26 @@ def _which(name: str) -> str:
     return name + ext
 
 
+def _activity_days(cfgs: list[str]) -> int | None:
+    """最近活动（天前）：各配置目录两层内最新 mtime。
+
+    只看两层——徽标只需要"在用/闲置"级别的粒度，不能为它把
+    8 万个文件的 ~/.dsh 深扫一遍（活动日志/会话通常落在浅层）。"""
+    newest = 0.0
+    for cfg in cfgs:
+        root = Path(cfg).expanduser()
+        try:
+            newest = max(newest, root.stat().st_mtime)
+            for entry in os.scandir(root):
+                try:
+                    newest = max(newest, entry.stat(follow_symlinks=False).st_mtime)
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return int((time.time() - newest) / 86400) if newest else None
+
+
 def _cfg_hit(agent: str, cfg: str) -> bool:
     """配置目录命中判定；带哨兵要求的目录（CFG_SENTINELS）须内容佐证。"""
     p = Path(cfg).expanduser()
@@ -211,7 +232,8 @@ def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
         hit_cfg = next((c for c in cfgs if _cfg_hit(name, c)), "")
         if exe or hit_cfg:
             hits.append((Finding(name, "local", True, category=category,
-                                 detail=exe or hit_cfg, adapter=adapter), exe))
+                                 detail=exe or hit_cfg, adapter=adapter,
+                                 activity_days=_activity_days(cfgs)), exe))
         else:
             out.append(Finding(name, "local", False, category=category))
     # 周边工具：检出才列（未检出不占"未检出"名单——本来就不是智能体）
@@ -249,7 +271,8 @@ def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
         cache["versions"] = versions_cache
         cache["updated_at"] = time.time()
         _save_cache(cache)
-    out.sort(key=lambda f: not f.found)   # 命中的排前面
+    out.sort(key=lambda f: (not f.found,
+                            f.activity_days if f.activity_days is not None else 99999))
     return out
 
 
@@ -368,10 +391,11 @@ def render_doctor(rep: DoctorReport) -> str:
         mark = "✓" if f.found else "·"
         ver = f"  {f.version}" if f.version else ""
         where = f"  ({f.detail})" if f.detail else ""
+        act = (f"  · {f.activity_days}天前" if f.activity_days is not None else "")
         ad = f"  [适配器: -a {f.adapter}]" if f.adapter else \
             "  [无适配器，可按契约 01 定制]"
         if f.found:
-            lines.append(f"  {mark} {f.name:<12}{ver}{where}{ad}")
+            lines.append(f"  {mark} {f.name:<12}{ver}{where}{act}{ad}")
         else:
             lines.append(f"  {mark} {f.name:<12}（未检出）")
     extras = [f for f in rep.local if f.found and f.category in ("runtime", "tool")]
