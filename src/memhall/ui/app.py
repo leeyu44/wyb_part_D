@@ -255,6 +255,53 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "无雷达图")
         return FileResponse(p, media_type="image/png")
 
+    @app.get("/api/runs/{run_id}/case/{case_id}/evidence")
+    def case_evidence(run_id: str, case_id: str) -> dict:
+        if not re.fullmatch(r"[\w.-]+", case_id):
+            raise HTTPException(400, "非法 case_id")
+        ev_file = _safe_run_id(run_id) / "cases" / case_id / "evidence.jsonl"
+        if not ev_file.is_file():
+            raise HTTPException(404, "无证据文件")
+        phases: dict[str, dict] = {}
+        memories: list[dict] = []
+        fs_created: list[str] = []
+        actions: list[dict] = []
+        for line in ev_file.read_text(encoding="utf-8").splitlines():
+            ev = json.loads(line)
+            pay = ev.get("payload") or {}
+            ph = ev.get("phase", "")
+            if ev.get("type") == "dialogue":
+                p = phases.setdefault(ph, {"name": ph, "clock_days": 0, "turns": []})
+                msgs, reps = pay.get("messages", []), pay.get("replies", [])
+                for i, msg in enumerate(msgs):
+                    r = reps[i] if i < len(reps) else {}
+                    p["turns"].append({
+                        "user": msg,
+                        "reply": r.get("text", ""),
+                        "latency_ms": r.get("latency_ms"),
+                        "session": r.get("session_id", ""),
+                    })
+            elif ev.get("type") == "memory_snapshot":
+                memories.append({"phase": ph,
+                                 "entries": [e.get("content", "")
+                                             for e in pay.get("entries", [])]})
+            elif ev.get("type") == "fs_diff":
+                fs_created = [e["path"] for e in pay.get("entries", [])
+                              if e.get("change") == "created"]
+            elif ev.get("type") == "actions":
+                actions = [{"tool": a.get("tool", ""),
+                            "result": a.get("result", "")}
+                           for a in pay.get("actions", [])]
+            if ev.get("clock_offset_days"):
+                p = phases.setdefault(ph, {"name": ph, "clock_days": 0, "turns": []})
+                p["clock_days"] = ev["clock_offset_days"]
+        order = {n: i for i, n in enumerate(["inject", "confound", "probe"])}
+        return {"case_id": case_id,
+                "phases": sorted(phases.values(),
+                                 key=lambda p: order.get(p["name"], 9)),
+                "memories": memories, "fs_created": fs_created,
+                "actions": actions}
+
     @app.get("/api/compare")
     def compare(runs: str) -> FileResponse:
         ids = [r for r in runs.split(",") if r.strip()][:2]

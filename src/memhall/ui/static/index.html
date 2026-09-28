@@ -146,6 +146,8 @@ select:focus,input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(217,1
   padding:8px 10px;border-bottom:1px solid var(--line)}
 .runs-table td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
 .runs-table tr.row{cursor:pointer;transition:background .12s}
+.vrow{cursor:pointer}
+.vrow:hover{background:var(--panel)}
 .runs-table tr.row:hover{background:var(--panel)}
 .runs-table tr.sel{background:var(--acc-soft)}
 .mono{font-family:var(--mono)}
@@ -175,6 +177,36 @@ select:focus,input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(217,1
 #toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(80px);
   background:var(--ink);color:#fff;padding:10px 20px;border-radius:var(--r);
   font-size:13.5px;box-shadow:0 8px 24px rgba(0,0,0,.18);opacity:0;z-index:99}
+.ev-overlay{position:fixed;inset:0;background:rgba(24,24,27,.42);display:none;
+  z-index:90;align-items:flex-start;justify-content:center;padding:36px 16px;overflow-y:auto}
+.ev-overlay.on{display:flex}
+.ev-card{background:var(--card);border-radius:12px;border:1px solid var(--line);
+  width:min(760px,100%);max-height:calc(100vh - 72px);display:flex;flex-direction:column}
+.ev-head{display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:14px 20px;border-bottom:1px solid var(--line)}
+.ev-body{padding:16px 20px;overflow-y:auto}
+.phase-h{display:flex;align-items:center;gap:10px;margin:16px 0 10px}
+.phase-h:first-child{margin-top:0}
+.phase-chip{font-weight:600;font-size:12.5px;padding:3px 10px;border-radius:6px;
+  background:var(--acc-soft);color:var(--acc-ink)}
+.clock-badge{font-family:var(--mono);font-size:11.5px;color:var(--warn);
+  border:1px solid var(--warn-soft);border-radius:5px;padding:1px 7px;background:var(--warn-soft)}
+.turn{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.turn .who{font-size:11.5px;color:var(--faint)}
+.turn .u{align-self:flex-end;max-width:85%;background:var(--panel);
+  border-radius:10px 10px 2px 10px;padding:8px 12px;font-size:13.5px;white-space:pre-wrap}
+.turn .a{align-self:flex-start;max-width:92%;border:1px solid var(--line);
+  border-radius:10px 10px 10px 2px;padding:8px 12px;font-size:13.5px;white-space:pre-wrap;position:relative}
+.lat{font-family:var(--mono);font-size:11px;color:var(--faint);align-self:flex-end}
+.memsec{margin-top:16px}
+.memlist{border:1px solid var(--line-soft);border-radius:var(--r);padding:10px 12px;margin-top:6px}
+.memlist div{font-family:var(--mono);font-size:12px;padding:2px 0;word-break:break-all}
+.fslist{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.fslist span{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);
+  border-radius:5px;padding:2px 7px;color:var(--ok)}
+.xbtn{border:0;background:transparent;color:var(--faint);font-size:20px;cursor:pointer;
+  line-height:1;padding:4px 8px;border-radius:6px}
+.xbtn:hover{color:var(--ink);background:var(--panel)}
 .empty{color:var(--faint);font-size:13px;padding:16px 2px}
 .compare-bar{display:none;align-items:center;gap:12px;margin:12px 0 4px;flex-wrap:wrap}
 footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
@@ -299,6 +331,17 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
     </section>
   </main>
   <footer>麟阁 MemHall · 本地服务 127.0.0.1 · 证据可下钻</footer>
+</div>
+<div id="evOverlay" class="ev-overlay">
+  <div class="ev-card" id="evCard">
+    <div class="ev-head">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        <span class="mono" id="evCaseId" style="font-weight:600;font-size:14px"></span>
+        <span class="tag" id="evTag">证据下钻</span></div>
+      <button class="xbtn" id="evClose">×</button>
+    </div>
+    <div class="ev-body" id="evBody"></div>
+  </div>
 </div>
 <div id="toast"></div>
 <script src="/static/gsap.min.js"></script>
@@ -523,6 +566,7 @@ $("#btnCompare").addEventListener("click",()=>{
 });
 let vFilter="all";
 async function selectRun(runId){
+  currentRunId=runId;
   compareSel=[];$$(".cmpck").forEach(c=>c.checked=false);updateCompareBar();
   $$("#runsList tr.row").forEach(tr=>tr.classList.toggle("sel",tr.dataset.id===runId));
   const det=$("#reportDetail");
@@ -556,13 +600,76 @@ function renderVerdicts(vs){
   const rows=vs.filter(v=>vFilter==="all"||(VMETA[v.verdict]?.[0])===vFilter);
   $("#vBody").innerHTML=rows.map(v=>{
     const [label,cls]=VMETA[v.verdict]||[v.verdict,"dim"];
-    return `<tr><td class="mono" style="font-size:12px">${esc(v.probe_id)}</td>
+    return `<tr class="vrow" data-case="${esc(v.case_id||"")}" title="点击查看该用例完整问答证据">
+      <td class="mono" style="font-size:12px">${esc(v.probe_id)}</td>
       <td style="font-size:12.5px">${esc(v.case_id||"")}</td>
       <td><span class="pill ${cls}">${label}</span></td>
       <td style="font-size:12px;color:var(--sub)">${esc(v.decided_by||"")}</td>
       <td class="exp" style="font-size:12.5px">${esc((v.explanation||"").slice(0,120))}</td></tr>`;}).join("");
+  $$("#vBody tr.vrow").forEach(tr=>tr.addEventListener("click",()=>{
+    if(tr.dataset.case){openCase(tr.dataset.case);}}));
   popIn($("#vBody").querySelectorAll(".pill"));
 }
+
+/* ---------- 证据下钻 ---------- */
+const PHASE_ZH={inject:"教 · 注入",confound:"隔 · 干扰",probe:"考 · 探测"};
+let currentRunId=null;
+async function openCase(caseId){
+  if(!currentRunId){toast("先选择一次运行");return}
+  const body=$("#evBody"),ov=$("#evOverlay");
+  body.innerHTML='<div class="empty"><span class="spin"></span> 读取证据…</div>';
+  $("#evCaseId").textContent=caseId;
+  ov.classList.add("on");
+  if(G){G.fromTo(ov,{opacity:0},{opacity:1,duration:.25});
+    G.fromTo("#evCard",{y:26,opacity:0,scale:.98},
+      {y:0,opacity:1,scale:1,duration:.4,ease:"power3.out"});}
+  try{
+    const d=await api(`/api/runs/${encodeURIComponent(currentRunId)}/case/${encodeURIComponent(caseId)}/evidence`);
+    renderEvidence(d);
+  }catch(e){body.innerHTML=`<div class="empty">读取失败：${esc(e.message)}</div>`;}
+}
+function closeCase(){
+  const ov=$("#evOverlay");
+  if(!ov.classList.contains("on")){return}
+  const done=()=>ov.classList.remove("on");
+  if(G){G.to(ov,{opacity:0,duration:.22,onComplete:done});}else{done();}
+}
+function renderEvidence(d){
+  const body=$("#evBody");
+  let h="";
+  for(const p of d.phases){
+    h+=`<div class="phase-h"><span class="phase-chip">${PHASE_ZH[p.name]||p.name}</span>
+      ${p.clock_days?`<span class="clock-badge">时钟 +${p.clock_days} 天</span>`:""}</div>`;
+    for(const t of p.turns){
+      h+=`<div class="turn">
+        <span class="who">用户</span><div class="u">${esc(t.user)}</div>
+        <span class="who">智能体</span><div class="a">${esc(t.reply||"（无回复）")}</div>
+        ${t.latency_ms?`<span class="lat">${(t.latency_ms/1000).toFixed(1)}s</span>`:""}
+      </div>`;
+    }
+  }
+  if(!d.phases.length){h+='<div class="empty">无对话证据</div>';}
+  if(d.memories.length){
+    h+=`<h2.sec>记忆快照</h2>`;
+    for(const m of d.memories){
+      h+=`<div class="memsec"><span class="tag">${PHASE_ZH[m.phase]||m.phase} 后</span>
+        <div class="memlist">${m.entries.length?m.entries.map(e=>`<div>${esc(e)}</div>`).join("")
+          :'<div style="color:var(--faint)">（空，未写入）</div>'}</div></div>`;
+    }
+  }
+  if(d.fs_created.length){
+    h+=`<h2.sec>文件系统新增</h2><div class="fslist">${d.fs_created.map(p=>`<span>${esc(p)}</span>`).join("")}</div>`;
+  }
+  if(d.actions.length){
+    h+=`<h2.sec>工具动作</h2><div class="memlist">${d.actions.map(a=>`<div>${esc(a.tool)} → ${esc(a.result)}</div>`).join("")}</div>`;
+  }
+  body.innerHTML=h;
+  if(G){G.from(body.querySelectorAll(".turn"),{y:10,opacity:0,duration:.3,stagger:.04,ease:"power2.out"});
+    popIn(body.querySelectorAll(".phase-chip,.clock-badge"));}
+}
+$("#evClose").addEventListener("click",closeCase);
+$("#evOverlay").addEventListener("click",e=>{if(e.target===$("#evOverlay")){closeCase();}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeCase();}});
 
 /* ---------- 配置 ---------- */
 let cfgLoaded=false;
