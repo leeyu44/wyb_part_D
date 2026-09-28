@@ -160,18 +160,20 @@ def _utf8_console() -> None:
 
 def _load_dotenv() -> None:
     """把 .env 装进进程环境（setdefault，手工 export 优先）。
-    源码=仓库根；打包=exe 同级。所有 CLI 入口统一走这里——
-    run/doctor 直跑也依赖 AGENT_LLM_* 等键，不能只在 ui 入口装。"""
-    env_file = (Path(sys.executable).resolve().parent / ".env"
-                if getattr(sys, "frozen", False)
-                else Path(__file__).resolve().parents[2] / ".env")
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
+    候选：源码=仓库根 / 打包=exe 同级 / deb 装机=~/memhall.env。
+    所有 CLI 入口统一走这里——run/doctor 直跑也依赖 AGENT_LLM_* 等键。"""
+    candidates = ([Path(sys.executable).resolve().parent / ".env"]
+                  if getattr(sys, "frozen", False)
+                  else [Path(__file__).resolve().parents[2] / ".env"])
+    candidates.append(Path.home() / "memhall.env")  # deb 装机配置页的落点
+    for env_file in candidates:
+        if not env_file.exists():
+            continue
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:

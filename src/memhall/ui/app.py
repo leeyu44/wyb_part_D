@@ -38,6 +38,19 @@ REPO_ROOT = (Path(sys.executable).resolve().parent
              if getattr(sys, "frozen", False)
              else Path(__file__).resolve().parents[3])
 ENV_PATH = REPO_ROOT / ".env"
+if not os.access(REPO_ROOT, os.W_OK):  # deb 装机：系统目录不可写，配置落家目录
+    ENV_PATH = Path.home() / "memhall.env"
+
+
+def _runs_root() -> Path:
+    """runs 落点：仓库/exe 同级；deb 装机系统目录不可写时退 ~/memhall-runs。"""
+    r = REPO_ROOT / "runs"
+    try:
+        r.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        r = Path.home() / "memhall-runs"
+        r.mkdir(parents=True, exist_ok=True)
+    return r
 
 
 def _case_roots() -> list[Path]:
@@ -88,7 +101,7 @@ session = RunSession()
 def _safe_run_id(run_id: str) -> Path:
     if not re.fullmatch(r"[\w.-]+", run_id):
         raise HTTPException(400, "非法 run_id")
-    return REPO_ROOT / "runs" / run_id
+    return _runs_root() / run_id
 
 
 def create_app() -> FastAPI:
@@ -186,7 +199,7 @@ def create_app() -> FastAPI:
         adapter_name = body.get("adapter", "mock")
         case_dir = body.get("cases", "cases/full")
         judge_mode = body.get("judge", "scripted")
-        out_root = REPO_ROOT / body.get("out", "runs")
+        out_root = _runs_root()
 
         loop = asyncio.get_running_loop()
 
@@ -290,7 +303,7 @@ def create_app() -> FastAPI:
     @app.get("/api/runs")
     def list_runs() -> dict:
         entries = []
-        root = REPO_ROOT / "runs"
+        root = _runs_root()
         if root.is_dir():
             for d in root.iterdir():
                 if not (d / "manifest.json").is_file() or not d.name[0].isdigit():
@@ -394,7 +407,7 @@ def create_app() -> FastAPI:
             label = f"{m.get('adapter', rid)} ({m['overall_score']:.1%})"
             scores[label] = m["capability_scores"]
             names.append(label)
-        out_dir = REPO_ROOT / "runs" / "_compare"
+        out_dir = _runs_root() / "_compare"
         out_dir.mkdir(parents=True, exist_ok=True)
         out = out_dir / f"{ids[0]}__{ids[1]}.png"
         render_radar(scores, str(out))
