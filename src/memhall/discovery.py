@@ -39,6 +39,7 @@ class Finding:
     detail: str = ""
     adapter: str = ""          # 对应 memhall run -a <name>；空 = 无适配器
     hint: str = ""
+    category: str = "cli"      # cli / ide = 智能体；runtime / tool = 周边信号，非智能体
 
 
 @dataclass
@@ -62,44 +63,65 @@ class DoctorReport:
         return sorted(names)
 
 
-# (名字, 可执行候选, 配置目录候选, 适配器名) —— 信号矩阵：可执行或配置目录任一命中。
-# 注册表以 2026-09-28 本机实测目录为底稿 + 社区点名项，探测不到的安静不显示。
-LOCAL_AGENTS: list[tuple[str, list[str], list[str], str]] = [
-    # --- 主力 CLI 智能体 ---
-    ("claude-code", ["claude"], ["~/.claude"], ""),
-    ("codex", ["codex"], ["~/.codex"], ""),
-    ("dsh (DeepSeek Harness)", ["dsh"], ["~/.dsh"], ""),
-    ("gemini-cli", ["gemini"], ["~/.gemini"], ""),
-    ("opencode", ["opencode"], ["~/.config/opencode"], ""),
-    ("qwen-code", ["qwen"], ["~/.qwen"], ""),
-    ("qwenpaw", ["qwenpaw"], ["~/.qwenpaw"], ""),
-    ("zcode", ["zcode"], ["~/.zcode"], ""),
-    ("pi", ["pi"], ["~/.pi"], ""),
-    ("grok-build", ["grok", "grokbuild"], ["~/.grok"], ""),
-    ("workbuddy", ["workbuddy"], ["~/.workbuddy"], ""),
-    ("aider", ["aider"], ["~/.aider.conf.yml"], ""),
-    ("goose", ["goose"], ["~/.config/goose"], ""),
-    ("crush", ["crush"], ["~/.config/crush"], ""),
-    ("hermes", ["hermes"], ["~/.hermes"], "hermes"),
-    ("kylin-bot", ["kylin-bot"], ["~/.kylinbot"], "kylinbot"),
+# 智能体注册表 —— 方案对齐 clawd-on-desk 的 agent-installation-detector.js：
+# ①只收真智能体（CLI 编程智能体 + IDE 内嵌），模型运行时/聊天客户端/管理工具
+#   不进名单（ollama 等见 EXTRA_TOOLS，检出后单独一排说明）
+# ②目录常量逐一对齐 clawd hooks/*-install.js：kimi 双代 ~/.kimi-code + ~/.kimi、
+#   workbuddy 双代、pi=~/.pi/agent、qwenwork=~/.QwenWorkCN、mimocode=~/.config/mimocode
+# ③目录存在≠装过：dsh/遗留 workbuddy 目录要求哨兵内容佐证（CFG_SENTINELS）
+# (名字, 可执行候选, 配置目录候选, 适配器名, 类别)
+LOCAL_AGENTS: list[tuple[str, list[str], list[str], str, str]] = [
+    # --- CLI 编程智能体 ---
+    ("claude-code", ["claude"], ["~/.claude"], "", "cli"),
+    ("codex", ["codex"], ["~/.codex"], "", "cli"),
+    ("dsh (DeepSeek Harness)", ["dsh"], ["~/.dsh"], "", "cli"),
+    ("gemini-cli", ["gemini"], ["~/.gemini"], "", "cli"),
+    ("opencode", ["opencode"], ["~/.config/opencode"], "", "cli"),
+    ("mimocode", ["mimocode"], ["~/.config/mimocode"], "", "cli"),
+    ("qwen-code", ["qwen"], ["~/.qwen"], "", "cli"),
+    ("qwenpaw", ["qwenpaw"], ["~/.qwenpaw"], "", "cli"),
+    ("zcode", ["zcode"], ["~/.zcode"], "", "cli"),
+    ("pi", ["pi"], ["~/.pi/agent"], "", "cli"),
+    ("grok-build", ["grok", "grokbuild"], ["~/.grok"], "", "cli"),
+    ("workbuddy", ["workbuddy"], ["~/.workbuddy-ai", "~/.workbuddy"], "", "cli"),
+    ("kimi", ["kimi"], ["~/.kimi-code", "~/.kimi"], "", "cli"),
+    ("kiro", ["kiro"], ["~/.kiro"], "", "cli"),
+    ("cursor-agent", ["cursor-agent", "cursor"], ["~/.cursor"], "", "cli"),
+    ("copilot-cli", ["copilot"], ["~/.copilot"], "", "cli"),
+    ("codebuddy", ["codebuddy"], ["~/.codebuddy"], "", "cli"),
+    ("openclaw", ["openclaw"], ["~/.openclaw"], "", "cli"),
+    ("qoder", ["qoder"], ["~/.qoder"], "", "cli"),
+    ("qoderwork", ["qoderwork"], ["~/.qoderwork"], "", "cli"),
+    ("qwenwork", ["qwenwork"], ["~/.QwenWorkCN"], "", "cli"),
+    ("aider", ["aider"], ["~/.aider.conf.yml"], "", "cli"),
+    ("goose", ["goose"], ["~/.config/goose"], "", "cli"),
+    ("crush", ["crush"], ["~/.config/crush"], "", "cli"),
+    ("hermes", ["hermes"], ["~/.hermes"], "hermes", "cli"),
+    ("kylin-bot", ["kylin-bot"], ["~/.kylinbot"], "kylinbot", "cli"),
     # --- IDE / 编辑器内智能体 ---
-    ("cline", ["cline"], ["~/.cline"], ""),
-    ("kilocode", ["kilocode"], ["~/.kilocode"], ""),
-    ("copilot", ["copilot"], ["~/.copilot"], ""),
-    ("continue", ["continue"], ["~/.continue"], ""),
-    ("lingma (通义灵码)", ["lingma"], ["~/.lingma"], ""),
-    ("codebuddy", ["codebuddy"], ["~/.codebuddy"], ""),
-    ("trae", ["trae", "trea"], ["~/.trae-cn", "~/.trae-aicc"], ""),
-    ("marscode", ["marscode"], ["~/.marscode"], ""),
-    # --- 桌面客户端 / 模型运行时 ---
-    ("cherry-studio", ["cherry"], ["~/.cherrystudio"], ""),
-    ("kimi", ["kimi"], ["~/kimi-chat"], ""),
-    ("ollama", ["ollama"], ["~/.ollama"], ""),
-    ("lm-studio", ["lms", "lmstudio"], ["~/.lmstudio"], ""),
-    ("modelscope", ["modelscope"], ["~/.modelscope"], ""),
-    # --- 配置管理 / 工具 ---
-    ("cc-switch", ["ccswitch", "cc-switch"], ["~/.cc-switch"], ""),
-    ("clawd", ["clawd"], ["~/.clawd"], ""),
+    ("cline", ["cline"], ["~/.cline"], "", "ide"),
+    ("continue", ["continue"], ["~/.continue"], "", "ide"),
+    ("lingma (通义灵码)", ["lingma"], ["~/.lingma"], "", "ide"),
+    ("trae", ["trae", "trea"], ["~/.trae-cn", "~/.trae-aicc"], "", "ide"),
+    ("marscode", ["marscode"], ["~/.marscode"], "", "ide"),
+    ("kilocode", ["kilocode"], ["~/.kilocode"], "", "ide"),
+]
+
+# 目录存在还不够的（clawd 教训：目录可能被别的工具或用户随手创建，
+# 如 ~/kimi-chat 里只躺一个 index.html）：要求哨兵子项任一存在才算命中。
+# agent 名 -> {配置目录 -> 哨兵列表}
+CFG_SENTINELS: dict[str, dict[str, list[str]]] = {
+    "dsh (DeepSeek Harness)": {"~/.dsh": ["profiles", "sessions", "storages"]},
+    "workbuddy": {"~/.workbuddy": ["settings.json"]},
+}
+
+# 非智能体的周边信号：检出后单独说明，不进"发现 N 个智能体"计数
+# (名字, 可执行候选, 目录, 类别, 说明)
+EXTRA_TOOLS: list[tuple[str, list[str], list[str], str, str]] = [
+    ("ollama", ["ollama"], ["~/.ollama"], "runtime", "本地推理运行时"),
+    ("lm-studio", ["lms", "lmstudio"], ["~/.lmstudio"], "runtime", "本地推理运行时"),
+    ("cc-switch", ["ccswitch", "cc-switch"], ["~/.cc-switch"], "tool", "智能体配置切换器"),
+    ("cherry-studio", ["cherry"], ["~/.cherrystudio"], "tool", "聊天客户端"),
 ]
 
 VM_AGENTS: list[tuple[str, list[str], str]] = [
@@ -124,26 +146,56 @@ def _save_cache(cache: dict) -> None:
 
 
 _path_idx: dict[str, str] | None = None   # PATH 文件名索引（进程内一次构建）
+_EXT_RANK = {".exe": 4, ".com": 3, ".cmd": 2, ".bat": 1, "": 0}
 
 
 def _which(name: str) -> str:
     """which 的索引版：长 PATH 下 shutil.which 逐目录 stat 太慢（实测 2 万+次），
-    一次 listdir 建名→扩展索引后全部内存查询。命中返回可执行名，否则空。"""
+    一次 scandir 建名→扩展索引后全部内存查询。与 shutil.which 对齐的三点：
+    ①只索引文件；②POSIX 校验可执行位；③Windows 同名多扩展取 PATHEXT 优先级
+    最高者——fnm/git 的无扩展 bash shim 蹭不掉真身 claude.exe/claude.cmd
+    （否则版本探测时 CreateProcess 找不到可执行文件直接失败）。"""
+    global _path_idx
     global _path_idx
     if _path_idx is None:
         idx: dict[str, str] = {}
         dirs = dict.fromkeys(os.environ.get("PATH", "").split(os.pathsep))
         for d in dirs:
             try:
-                for f in os.listdir(d):
-                    root, ext = os.path.splitext(f)
-                    if not ext or ext.lower() in (".exe", ".cmd", ".bat", ".com"):
-                        idx.setdefault(root.lower(), ext)
+                with os.scandir(d) as it:
+                    for entry in it:
+                        try:
+                            if not entry.is_file():
+                                continue
+                            if os.name == "posix" and not os.access(entry.path, os.X_OK):
+                                continue
+                        except OSError:
+                            continue
+                        root, ext = os.path.splitext(entry.name)
+                        ext = ext.lower()
+                        if ext and ext not in (".exe", ".com", ".cmd", ".bat"):
+                            continue
+                        old = idx.get(root.lower())
+                        if old is None or _EXT_RANK.get(ext, 0) > _EXT_RANK.get(old, 0):
+                            idx[root.lower()] = ext
             except OSError:
                 continue
         _path_idx = idx
     ext = _path_idx.get(name.lower())
-    return name + (ext or "") if ext is not None else ""
+    if ext is None:
+        return ""
+    return name + ext
+
+
+def _cfg_hit(agent: str, cfg: str) -> bool:
+    """配置目录命中判定；带哨兵要求的目录（CFG_SENTINELS）须内容佐证。"""
+    p = Path(cfg).expanduser()
+    if not p.exists():
+        return False
+    sentinels = CFG_SENTINELS.get(agent, {}).get(cfg)
+    if sentinels:
+        return any((p / s).exists() for s in sentinels)
+    return True
 
 
 def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
@@ -154,15 +206,22 @@ def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
 
     out: list[Finding] = []
     hits: list[tuple[Finding, str]] = []   # (finding, exe)
-    for name, bins, cfgs, adapter in LOCAL_AGENTS:
-        exe = next((b for b in bins if _which(b)), "")
+    for name, bins, cfgs, adapter, category in LOCAL_AGENTS:
+        exe = next((w for b in bins if (w := _which(b))), "")
+        hit_cfg = next((c for c in cfgs if _cfg_hit(name, c)), "")
+        if exe or hit_cfg:
+            hits.append((Finding(name, "local", True, category=category,
+                                 detail=exe or hit_cfg, adapter=adapter), exe))
+        else:
+            out.append(Finding(name, "local", False, category=category))
+    # 周边工具：检出才列（未检出不占"未检出"名单——本来就不是智能体）
+    for name, bins, cfgs, category, note in EXTRA_TOOLS:
+        exe = next((w for b in bins if (w := _which(b))), "")
         hit_cfg = next((c for c in cfgs
                         if Path(c).expanduser().exists()), "")
         if exe or hit_cfg:
-            hits.append((Finding(name, "local", True,
-                                 detail=exe or hit_cfg, adapter=adapter), exe))
-        else:
-            out.append(Finding(name, "local", False))
+            hits.append((Finding(name, "local", True, category=category, hint=note,
+                                 detail=exe or hit_cfg), exe))
 
     # 版本是锦上添花：并行探测 + 短超时 + 12h 落盘缓存（慢 CLI 如本地 hermes 实测 11s）
     def _ver(exe: str) -> str:
@@ -284,7 +343,8 @@ def render_doctor(rep: DoctorReport) -> str:
     lines = ["麟阁 MemHall · 环境体检", ""]
 
     lines.append("── 本机智能体 ──")
-    for f in rep.local:
+    agents = [f for f in rep.local if f.category in ("", "cli", "ide")]
+    for f in agents:
         mark = "✓" if f.found else "·"
         ver = f"  {f.version}" if f.version else ""
         where = f"  ({f.detail})" if f.detail else ""
@@ -294,6 +354,10 @@ def render_doctor(rep: DoctorReport) -> str:
             lines.append(f"  {mark} {f.name:<12}{ver}{where}{ad}")
         else:
             lines.append(f"  {mark} {f.name:<12}（未检出）")
+    extras = [f for f in rep.local if f.found and f.category in ("runtime", "tool")]
+    if extras:
+        lines.append("  · 另检出（非智能体）: "
+                     + "、".join(f"{f.name}（{f.hint}）" for f in extras))
     lines.append("")
 
     lines.append("── 评测机智能体（openKylin VM）──")

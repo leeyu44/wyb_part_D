@@ -41,6 +41,40 @@ def test_check_env_degrades(monkeypatch):
     assert "缺" in checks["LLM 网关配置"].detail
 
 
+def test_which_prefers_pathext_over_shim(monkeypatch, tmp_path):
+    """Windows 下无扩展 bash shim 不得蹭掉真身 .cmd/.exe（clawd 探测方案对齐）。"""
+    import os
+    import memhall.discovery as disc
+    for n in ("claude", "claude.cmd"):
+        f = tmp_path / n
+        f.write_text("")
+        os.chmod(f, 0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(disc, "_path_idx", None)
+    assert disc._which("claude") == "claude.cmd"
+
+
+def test_dsh_sentinel_and_extras_category(monkeypatch, tmp_path):
+    """目录存在≠装过：dsh 需哨兵内容；运行时/工具不冒充智能体。"""
+    import memhall.discovery as disc
+    monkeypatch.setattr(disc, "_which", lambda b: "")
+    monkeypatch.setattr(disc, "CACHE_PATH", tmp_path / "cache.json")
+
+    def fake_exists(self):
+        s = str(self)
+        if ".dsh" in s:
+            return "profiles" in s or s.rstrip("\\/").endswith(".dsh")
+        return ".ollama" in s
+
+    monkeypatch.setattr("memhall.discovery.Path.exists", fake_exists)
+    out = scan_local()
+    by = {f.name: f for f in out}
+    assert by["dsh (DeepSeek Harness)"].found            # 哨兵 profiles 佐证
+    assert by["ollama"].found and by["ollama"].category == "runtime"
+    agents = [f for f in out if f.found and f.category in ("cli", "ide")]
+    assert all(f.name != "ollama" for f in agents)
+
+
 def test_usable_adapters_always_has_mock():
     rep = DoctorReport(local=[], vm=[], env=[])
     assert "mock" in rep.usable_adapters()

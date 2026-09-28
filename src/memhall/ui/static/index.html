@@ -485,10 +485,10 @@ $$("#nav button").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.
 
 /* ---------- 体检 ---------- */
 let doctorLoaded=false,agentNames=null;
-const FALLBACK_NAMES=["claude-code","codex","dsh","gemini-cli","opencode","qwen-code","qwenpaw",
-  "zcode","pi","grok-build","workbuddy","aider","goose","crush","kylin-bot","hermes","cline",
-  "kilocode","copilot","continue","lingma","codebuddy","trae","marscode","cherry-studio",
-  "kimi","ollama","lm-studio","modelscope","cc-switch","clawd"];
+const FALLBACK_NAMES=["claude-code","codex","dsh","gemini-cli","opencode","mimocode",
+  "qwen-code","qwenpaw","zcode","pi","grok-build","workbuddy","kimi","kiro","cursor-agent",
+  "copilot-cli","codebuddy","openclaw","qoder","qoderwork","qwenwork","aider","goose",
+  "crush","hermes","kylin-bot","cline","continue","lingma","trae","marscode","kilocode"];
 async function loadAgentNames(){
   if(agentNames)return;
   try{agentNames=(await api("/api/agents")).names;}catch{agentNames=FALLBACK_NAMES;}
@@ -543,7 +543,7 @@ async function loadDoctor(fresh=false){
   const btn=$("#docRefresh");btn.disabled=true;btn.classList.add("scanning");
   body.innerHTML=`
     <h2.sec>本机智能体<span class="found-badge" id="nLocal" style="display:none"><b>0</b><small>个在册</small></span></h2>
-    <div class="grid-cards" id="dgLocal"></div><div id="dgMissed"></div>
+    <div class="grid-cards" id="dgLocal"></div><div id="dgMissed"></div><div id="dgExtras"></div>
     <h2.sec>评测机智能体（openKylin VM）<span class="found-badge" id="nVm" style="display:none"><b>0</b><small>个在册</small></span></h2>
     <div class="grid-cards" id="dgVm"></div>
     <h2.sec>评测环境就绪度</h2><div id="dgEnv"></div>
@@ -589,11 +589,17 @@ async function loadDoctor(fresh=false){
   const pLocal=done("local",api(`/api/doctor/local${fresh?"?fresh=1":""}`),(d)=>{
     const box=$("#dgLocal");stopTick("local");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
-    const found=d.local.filter(f=>f.found),missed=d.local.filter(f=>!f.found);
+    const isAgent=f=>f.category==="cli"||f.category==="ide";
+    const found=d.local.filter(f=>f.found&&isAgent(f)),
+          missed=d.local.filter(f=>!f.found),
+          extras=d.local.filter(f=>f.found&&!isAgent(f));
     badge("#nLocal",found.length);
     box.innerHTML=found.map(cardRow).join("");
     revealCards(box);
-    renderNotFoundWrap($("#dgMissed"),missed.map(f=>f.name));});
+    renderNotFoundWrap($("#dgMissed"),missed.map(f=>f.name));
+    $("#dgExtras").innerHTML=extras.length
+      ?`<div style="margin-top:10px;font-size:12.5px;color:var(--sub);padding:2px 2px 0">另检出（非智能体）：${extras.map(f=>`<b style="color:var(--ink)">${esc(f.name)}</b>（${esc(f.hint||"周边工具")}）`).join(" · ")}</div>`
+      :"";});
   const pVm=done("vm",api("/api/doctor/vm"),(d)=>{
     const box=$("#dgVm");stopTick("vm");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
@@ -616,7 +622,8 @@ async function loadDoctor(fresh=false){
     await Promise.all([pLocal,pVm,pEnv]);
     const usable=["mock",...new Set([...(results.local?.local||[]),...(results.vm?.vm||[])]
       .filter(f=>f.found&&f.adapter).map(f=>f.adapter))];
-    const nFound=(results.local?.local||[]).filter(f=>f.found).length;
+    const nFound=(results.local?.local||[])
+      .filter(f=>f.found&&(f.category==="cli"||f.category==="ide")).length;
     $("#dgHint").innerHTML=`本机发现 <b>${nFound}</b> 个智能体 · 可用适配器 <b>${usable.join(" · ")}</b>　<span style="color:var(--faint);font-size:12px">版本信息缓存 12h，「重新体检」强制刷新</span>`;
     const bar=$("#dgBar");bar.style.display="flex";
     const go=$("#docGoRun");
