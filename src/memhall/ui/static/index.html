@@ -438,6 +438,19 @@ function animBars(wrap,caps){
   if(!G){bars.forEach(b=>b.style.width=(b.dataset.w*100)+"%");return}
   G.to(bars,{width:(i,el)=>(+el.dataset.w*100)+"%",duration:.8,ease:"power3.out",stagger:.06});
 }
+/* rAF 冻结兜底：无头截图/深度后台标签里 GSAP ticker 停摆，from() 动画会永远停在
+   opacity:0 初态导致整页不可见。定时器不依赖 rAF——动画 2.5s 无推进即强制置终态。 */
+if(G){
+  let _rafLast=-1,_rafStuck=0;
+  setInterval(()=>{
+    const t=G.globalTimeline.time();
+    _rafStuck=(t===_rafLast)?_rafStuck+1:0;_rafLast=t;
+    if(_rafStuck>=5){
+      G.globalTimeline.getChildren(true,true,true).forEach(ch=>{try{ch.progress(1)}catch(e){}});
+      _rafStuck=0;
+    }
+  },500);
+}
 
 /* ---------- Tab ---------- */
 const ink=$("#navInk");
