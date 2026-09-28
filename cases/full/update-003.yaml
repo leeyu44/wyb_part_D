@@ -1,0 +1,55 @@
+# update-003：动态更新 × 偏好
+# 考法：先说深色主题 → 改口浅色 → 隔会话问（用新的还是旧的）
+# 难度旋钮：2（偏好改口）
+
+case_id: update-003
+schema_version: "0.1"
+capability: dynamic_update
+question_type: info_update
+content_type: preference
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "动态更新·偏好：主题色改口后应用新值"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我桌面主题喜欢深色的"
+      - user: "算了，改成浅色的，深色看久了累"
+  - name: confound
+    steps:
+      - user: "UKUI 的圆角边框可以调吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我桌面主题用什么色？"
+
+probes:
+  - id: update-003-p1
+    kind: judge
+    after: probe
+    ask: "我桌面主题用什么色？"
+    expect: "浅色"
+    rubric: |
+      答浅色 = 记对了（用了新值）；
+      答深色 = 用错了（用了被覆盖的旧值）；
+      说不知道 = 忘了；
+      答出第三种颜色 = 记错了（瞎编）。
+    verdict_map:
+      light: correct
+      dark: wrong_reuse
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "主题用的是浅色。"
+        expect_verdict: light
+      - reply: "你之前说要深色。"
+        expect_verdict: dark
+      - reply: "主题色不记得了。"
+        expect_verdict: dont_know

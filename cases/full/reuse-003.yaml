@@ -1,0 +1,71 @@
+# reuse-003：任务复用 × 偏好（跨会话任务链）
+# 考法：S1 教文件命名习惯（年月日_主题）→ S2 无关会话 → S3 下发整理任务（须按习惯命名）
+# 判定：操作记录中出现按日期命名的 rename 动作=对；未出现=没用上习惯
+# 难度旋钮：2（命名习惯 + 操作记录验收）
+
+case_id: reuse-003
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: preference
+difficulty: 2
+tags: [kylin-context, task-chain, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "任务复用·偏好：文件命名习惯（yyyyMMdd_主题）在后续整理任务中复用"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我整理文件习惯按'年月日_主题'命名，比如 20260928_周报.docx"
+      - task: "把下载目录里那个会议材料按我的习惯改个名"
+  - name: confound
+    steps:
+      - user: "UKUI 的回收站多久清一次？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我整理文件按什么规则命名？"
+      - task: "把 ~/下载 里的项目资料也按我的习惯整理一下"
+
+probes:
+  # 规则判定：操作记录里出现按"yyyyMMdd_"模式的重命名动作 = 复用了命名习惯
+  - id: reuse-003-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: actions.contains_action
+        args: [{tool: rename, arg_pattern: "20\\d{6}_"}]
+        then: correct
+      - assert: actions.contains_action
+        args: [{tool: move, arg_pattern: "20\\d{6}_"}]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["actions"]
+
+  # judge 判定：正确召回命名规则
+  - id: reuse-003-p2
+    kind: judge
+    after: probe
+    ask: "我整理文件按什么规则命名？"
+    expect: "年月日_主题（如 20260928_周报）"
+    rubric: |
+      答年月日_主题 = 记对了；
+      答出其他命名规则 = 记混了；
+      说不知道 = 忘了。
+    verdict_map:
+      date_theme: correct
+      wrong_rule: confusion
+      dont_know: omission
+    anchors:
+      - reply: "按年月日_主题命名。"
+        expect_verdict: date_theme
+      - reply: "按主题_年月日吧。"
+        expect_verdict: wrong_rule
+      - reply: "命名规则没记住。"
+        expect_verdict: dont_know

@@ -1,0 +1,55 @@
+# persist-006：长期保持 × 项目状态
+# 考法：教一个项目进行状态 → 隔会话 → 问进度
+# 难度旋钮：2（状态语义较细：卡在哪个环节）
+
+case_id: persist-006
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: project_state
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持·项目状态：阶段类状态跨会话保持"
+
+phases:
+  - name: inject
+    steps:
+      - user: "数据分析那边，数据清洗已经跑完了，现在卡在出图上"
+  - name: confound
+    steps:
+      - user: "UKUI 的字体设置在哪里改？"
+      - user: "今天有没有什么系统更新？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "数据分析现在进行到哪一步了？"
+
+probes:
+  - id: persist-006-p1
+    kind: judge
+    after: probe
+    ask: "数据分析现在进行到哪一步了？"
+    expect: "卡在出图（清洗已完成）"
+    rubric: |
+      答已到出图阶段 / 卡在出图 = 记对了；
+      答还在清洗/未开始 = 记混了；
+      说不知道 = 忘了；
+      编造一个阶段 = 记错了（瞎编）。
+    verdict_map:
+      at_chart: correct
+      earlier_stage: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "清洗跑完了，正在做出图。"
+        expect_verdict: at_chart
+      - reply: "应该还在做数据清洗。"
+        expect_verdict: earlier_stage
+      - reply: "这个项目状态我不清楚。"
+        expect_verdict: dont_know

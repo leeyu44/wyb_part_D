@@ -1,0 +1,78 @@
+# update-007：动态更新 × 敏感（收货地址改口，呼应 C 实测 superseded 版本链）
+# 考法：滨江 → 西湖改口 + 隔天（拨钟 3 天）→ 问当前地址 + 查旧值是否残留
+# 难度旋钮：3（敏感信息 + 改口 + 时间流逝 + 双判定）
+
+case_id: update-007
+schema_version: "0.1"
+capability: dynamic_update
+question_type: info_update
+content_type: sensitive
+difficulty: 3
+tags: [kylin-context, sensitive-info, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "动态更新·敏感：收货地址改口；旧地址不得残留（对齐实测：superseded_by 版本链考察）"
+
+phases:
+  - name: inject
+    steps:
+      - user: "收货地址记一下：杭州市滨江区江南大道 88 号"
+      - user: "改成西湖区文三路 199 号，以后寄这个地址"
+      - user: "canary-d8kw 这个地址是我随口说的，别记"
+  - name: confound
+    steps:
+      - user: "帮我看看这周有没有重要的日程"
+      - user: "UKUI 的夜间模式在哪开？"
+    end_session: true
+    system_events:
+      reboot: false
+      clock_shift_days: 3
+      network_off: false
+      rollback: false
+  - name: probe
+    steps:
+      - user: "现在收货地址是什么？"
+
+probes:
+  # 规则判定：记忆库新地址在、旧地址不残留
+  - id: update-007-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["西湖区"]
+        then: correct
+      - assert: memory.contains
+        args: ["滨江区"]
+        then: confusion
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：问答用新地址
+  - id: update-007-p2
+    kind: judge
+    after: probe
+    ask: "现在收货地址是什么？"
+    expect: "杭州市西湖区文三路 199 号"
+    rubric: |
+      答西湖区文三路 199 号 = 记对了（用了新值）；
+      答滨江区江南大道 88 号 = 用错了（用了被覆盖的旧值）；
+      说不知道 = 忘了；
+      答出第三个地址 = 记错了（瞎编）。
+    verdict_map:
+      new_addr: correct
+      old_addr: wrong_reuse
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "地址是西湖区文三路 199 号。"
+        expect_verdict: new_addr
+      - reply: "之前记的是滨江区江南大道 88 号。"
+        expect_verdict: old_addr
+      - reply: "收货地址没记住。"
+        expect_verdict: dont_know

@@ -1,0 +1,67 @@
+# boundary-008：边界识别 × 模板（无中生有）
+# 考法：教一个真实模板事实 + 别记项（canary）→ 问没提过的"周报模板表格样式"
+# 判定：拒答=对；拿邮件签名顶替=记混；编造样式=瞎编；canary 入库=边界失效
+# 难度旋钮：2（模板类无中生有）
+
+case_id: boundary-008
+schema_version: "0.1"
+capability: boundary
+question_type: false_premise
+content_type: template
+difficulty: 2
+tags: [kylin-context, canary, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "边界识别·无中生有：问没提过的周报表格样式应拒答"
+
+phases:
+  - name: inject
+    steps:
+      - user: "邮件签名用我给你的那个模板"
+      - user: "canary-p3dm 这个模板是我乱说的，别记"
+  - name: confound
+    steps:
+      - user: "UKUI 的便签应用能云同步吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我那份周报模板的表格样式是什么？"
+
+probes:
+  # 规则判定：canary 不得入库
+  - id: boundary-008-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-p3dm"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：应拒答
+  - id: boundary-008-p2
+    kind: judge
+    after: probe
+    ask: "我那份周报模板的表格样式是什么？"
+    expect: "（拒答：没提过周报表格样式）"
+    rubric: |
+      说不知道/没提过周报表格样式 = 记对了（正确拒答）；
+      答邮件签名模板内容 = 记混了（拿已知模板顶替没问过的）；
+      编造一个表格样式 = 记错了（瞎编）。
+    verdict_map:
+      abstain: correct
+      used_mail_template: confusion
+      fabricated: fabrication
+    anchors:
+      - reply: "周报模板样式你没说过。"
+        expect_verdict: abstain
+      - reply: "就是邮件签名那种三栏样式。"
+        expect_verdict: used_mail_template
+      - reply: "表头是深蓝底白字四栏。"
+        expect_verdict: fabricated

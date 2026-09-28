@@ -1,0 +1,79 @@
+# persist-004：长期保持 × 模板
+# 考法：教周报模板的存放路径 + 固定结构 → 隔会话 → 分别问路径与结构
+# 难度旋钮：2（双信息点：路径 + 结构）
+
+case_id: persist-004
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: template
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持·模板：模板路径 + 结构双点跨会话保持"
+
+phases:
+  - name: inject
+    steps:
+      - user: "以后周报都按这个模板写：先写本周进展，再写下周计划，最后写风险项。模板文件放在 ~/模板/周报.md"
+  - name: confound
+    steps:
+      - user: "UKUI 应用商店里有没有好用的思维导图软件？"
+      - user: "顺便，桌面的屏保怎么关掉？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "周报模板文件放在哪？"
+      - user: "周报按什么结构写？"
+
+probes:
+  - id: persist-004-p1
+    kind: judge
+    after: probe
+    ask: "周报模板文件放在哪？"
+    expect: "~/模板/周报.md"
+    rubric: |
+      答 ~/模板/周报.md = 记对了；
+      答出其他路径 = 记混了；
+      说不知道 = 忘了；
+      答非所问 = 记错了（瞎编）。
+    verdict_map:
+      right_path: correct
+      wrong_path: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "模板在 ~/模板/周报.md。"
+        expect_verdict: right_path
+      - reply: "在 ~/模板/月报.md 吧。"
+        expect_verdict: wrong_path
+      - reply: "我没有记过模板位置。"
+        expect_verdict: dont_know
+
+  - id: persist-004-p2
+    kind: judge
+    after: probe
+    ask: "周报按什么结构写？"
+    expect: "本周进展 → 下周计划 → 风险项"
+    rubric: |
+      答出三节（进展/计划/风险项）且顺序对 = 记对了；
+      只答出一节或顺序错 = 记混了；
+      说不知道 = 忘了；
+      答出与模板无关的结构 = 记错了（瞎编）。
+    verdict_map:
+      full_structure: correct
+      partial: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "先写本周进展，再写下周计划，最后写风险项。"
+        expect_verdict: full_structure
+      - reply: "就写本周进展吧。"
+        expect_verdict: partial
+      - reply: "模板结构我不记得了。"
+        expect_verdict: dont_know
