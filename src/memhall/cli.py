@@ -158,6 +158,22 @@ def _utf8_console() -> None:
                 pass  # 非 TextIOWrapper（重定向到文件等）时不动
 
 
+def _load_dotenv() -> None:
+    """把 .env 装进进程环境（setdefault，手工 export 优先）。
+    源码=仓库根；打包=exe 同级。所有 CLI 入口统一走这里——
+    run/doctor 直跑也依赖 AGENT_LLM_* 等键，不能只在 ui 入口装。"""
+    env_file = (Path(sys.executable).resolve().parent / ".env"
+                if getattr(sys, "frozen", False)
+                else Path(__file__).resolve().parents[2] / ".env")
+    if not env_file.exists():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from memhall.discovery import render_doctor, run_doctor
     rep = run_doctor(scan_remote=not args.no_vm)
@@ -166,16 +182,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_ui(args: argparse.Namespace) -> int:
-    from pathlib import Path as _P
-    _env_file = (_P(sys.executable).resolve().parent / ".env"
-                 if getattr(sys, "frozen", False)
-                 else _P(__file__).resolve().parents[2] / ".env")
-    if _env_file.exists():  # UI 进程不吃手工 source，自动装 .env
-        for line in _env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
     from memhall.ui.app import create_app
     app = create_app()
     if args.window:
@@ -249,6 +255,7 @@ def _open_app_window(url: str) -> None:
 def main() -> None:
     _ensure_streams()
     _utf8_console()
+    _load_dotenv()
     if len(sys.argv) == 1 and getattr(sys, "frozen", False):
         sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
     parser = argparse.ArgumentParser(prog="memhall",
