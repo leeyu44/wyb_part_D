@@ -83,11 +83,11 @@ class EvidenceStore:
 
 @_register("fs.path_exists")
 def _fs_path_exists(args: list[Any], ev: EvidenceStore) -> bool:
-    """路径存在（含 fs_diff 中 created 条目，或宿主真实存在——M1 兼容 mock）。"""
+    """路径存在：优先信 fs_diff 证据（被测环境实测）；无 diff 时降级本地检查（mock 场景）。"""
     target = str(args[0])
     diff = ev.latest_fs_diff()
-    if diff and any(e.path == target and e.change == "created" for e in diff.entries):
-        return True
+    if diff is not None:
+        return any(e.path == target and e.change == "created" for e in diff.entries)
     return Path(target).exists()
 
 

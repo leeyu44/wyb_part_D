@@ -172,19 +172,26 @@ class OpenAICompatJudge:
             return None
 
     def complete(self, prompt: str) -> str:
+        import time
         import urllib.request
         payload = {"model": self.model, "messages": [{"role": "user", "content": prompt}]}
         if self.temperature is not None:
             payload["temperature"] = self.temperature
-        req = urllib.request.Request(
-            f"{self.base_url.rstrip('/')}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {self.api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        return body["choices"][0]["message"]["content"]
+        last_err: Exception | None = None
+        for attempt in range(5):   # 网关间歇性 TLS 干扰/限流，指数退避
+            try:
+                req = urllib.request.Request(
+                    f"{self.base_url.rstrip('/')}/chat/completions",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json",
+                             "Authorization": f"Bearer {self.api_key}"},
+                )
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    return json.loads(resp.read().decode("utf-8"))["choices"][0]["message"]["content"]
+            except Exception as e:   # noqa: BLE001 TLS 断流/429/503 一律重试
+                last_err = e
+                time.sleep(2 ** attempt)
+        raise RuntimeError(f"judge {self.name} 重试 5 次仍失败: {last_err}")
 
 
 @dataclass

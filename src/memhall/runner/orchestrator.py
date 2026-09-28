@@ -18,6 +18,8 @@ from memhall.schema.evidence import (
     Evidence,
     EvidencePhase,
     EvidenceType,
+    FsDiff,
+    FsDiffEntry,
     MemorySnapshot,
     Reply,
 )
@@ -67,6 +69,7 @@ class CaseRunner:
 
     def run(self) -> EvidenceStore:
         self.adapter.reset()
+        base_fs = self.adapter.fs_snapshot()
         session_id = "s-01"
         for phase in self.case.phases:
             messages: list[str] = []
@@ -93,6 +96,17 @@ class CaseRunner:
         self._collect("probe", EvidenceType.MEMORY_SNAPSHOT, snap.model_dump(mode="json"))
         dump = self.adapter.dump_actions()
         self._collect("probe", EvidenceType.ACTIONS, dump.model_dump(mode="json"))
+        # 文件系统 diff（适配器支持时）：before 快照 vs after 快照
+        after_fs = self.adapter.fs_snapshot()
+        if base_fs is not None and after_fs is not None:
+            created = sorted(set(after_fs) - set(base_fs))
+            deleted = sorted(set(base_fs) - set(after_fs))
+            fs_diff = FsDiff(entries=[FsDiffEntry(path=p, change="created")
+                                      for p in created]
+                             + [FsDiffEntry(path=p, change="deleted") for p in deleted],
+                             before_snapshot=f"n={len(base_fs)}",
+                             after_snapshot=f"n={len(after_fs)}")
+            self._collect("probe", EvidenceType.FS_DIFF, fs_diff.model_dump(mode="json"))
         self._flush()
         return self.store
 
