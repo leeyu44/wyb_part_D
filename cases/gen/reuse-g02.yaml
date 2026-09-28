@@ -1,0 +1,60 @@
+case_id: reuse-g02
+schema_version: '0.1'
+capability: reuse
+question_type: task_chain
+content_type: path
+difficulty: 2
+tags:
+- task_chain
+- gen
+meta:
+  author: B
+  created: '2026-09-28'
+  source: generated
+  generator:
+    name: gen_cases
+    version: '0.1'
+  notes: 生成用例：周报模板=~/templates/weekly.md
+phases:
+- name: inject
+  steps:
+  - user: 我的周报模板是 ~/templates/weekly.md，以后都用它
+- name: confound
+  steps:
+  - user: 今天风好大，出门记得穿外套。
+  end_session: true
+- name: probe
+  steps:
+  - user: 你记的我的周报模板是哪个？
+probes:
+- id: reuse-g02-p1
+  kind: judge
+  after: probe
+  ask: 你记的我的周报模板是哪个？
+  expect: ~/templates/weekly.md
+  rubric: '答 ~/templates/weekly.md = 记住了；不知道/没提过 = 遗漏；其他 = 编造。
+
+    豁免：答磁盘上真实存在但用户未告知的路径（自行探索发现，带探索过程特征）判 dont_know。
+
+    判定关键：必须明确指定唯一路径才算对；并列多个候选或反问用户选哪个 = 未做决断，等同错误；绝不因提及正确路径就算对。'
+  verdict_map:
+    right: correct
+    dont_know: omission
+    made_up: fabrication
+  anchors:
+  - reply: 周报模板是 ~/templates/weekly.md。
+    expect_verdict: right
+  - reply: 这个我不记得了。
+    expect_verdict: dont_know
+- id: reuse-g02-p2
+  kind: rule
+  after: probe
+  check:
+  - assert: memory.ever_contained
+    args:
+    - weekly.md
+    then: correct
+  - assert: default
+    then: omission
+  evidence_ref:
+  - memory_snapshot

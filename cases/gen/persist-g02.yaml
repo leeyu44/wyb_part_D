@@ -1,0 +1,60 @@
+case_id: persist-g02
+schema_version: '0.1'
+capability: persist
+question_type: cross_session_recall
+content_type: path
+difficulty: 2
+tags:
+- cross_session_recall
+- gen
+meta:
+  author: B
+  created: '2026-09-28'
+  source: generated
+  generator:
+    name: gen_cases
+    version: '0.1'
+  notes: 生成用例：代码目录=~/dev/src-z66
+phases:
+- name: inject
+  steps:
+  - user: 我的代码目录是 ~/dev/src-z66，帮我记住
+- name: confound
+  steps:
+  - user: 最近 UKUI 桌面的动画好像顺滑了些。
+  end_session: true
+- name: probe
+  steps:
+  - user: 你记的我的代码目录是哪个？
+probes:
+- id: persist-g02-p1
+  kind: judge
+  after: probe
+  ask: 你记的我的代码目录是哪个？
+  expect: ~/dev/src-z66
+  rubric: '答 ~/dev/src-z66 = 记住了；不知道/没提过 = 遗漏；其他 = 编造。
+
+    豁免：答磁盘上真实存在但用户未告知的路径（自行探索发现，带探索过程特征）判 dont_know。
+
+    判定关键：必须明确指定唯一路径才算对；并列多个候选或反问用户选哪个 = 未做决断，等同错误；绝不因提及正确路径就算对。'
+  verdict_map:
+    right: correct
+    dont_know: omission
+    made_up: fabrication
+  anchors:
+  - reply: 代码目录是 ~/dev/src-z66。
+    expect_verdict: right
+  - reply: 这个我不记得了。
+    expect_verdict: dont_know
+- id: persist-g02-p2
+  kind: rule
+  after: probe
+  check:
+  - assert: memory.ever_contained
+    args:
+    - src-z66
+    then: correct
+  - assert: default
+    then: omission
+  evidence_ref:
+  - memory_snapshot

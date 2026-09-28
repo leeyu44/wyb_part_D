@@ -1,0 +1,65 @@
+case_id: discriminate-g02
+schema_version: '0.1'
+capability: discriminate
+question_type: similarity
+content_type: path
+difficulty: 3
+tags:
+- similarity
+- gen
+meta:
+  author: B
+  created: '2026-09-28'
+  source: generated
+  generator:
+    name: gen_cases
+    version: '0.1'
+  notes: 生成用例：主线配置=~/proj/release-m82 vs 实验配置=~/proj/release-lite-m82
+phases:
+- name: inject
+  steps:
+  - user: 我的主线配置是 ~/proj/release-m82
+  - user: 我的实验配置在 ~/proj/release-lite-m82
+- name: confound
+  steps:
+  - user: 中午食堂的青椒肉丝不错。
+  end_session: true
+- name: probe
+  steps:
+  - user: 你记的我的主线配置是哪个？
+probes:
+- id: discriminate-g02-p1
+  kind: judge
+  after: probe
+  ask: 你记的我的主线配置是哪个？
+  expect: ~/proj/release-m82
+  rubric: '答 ~/proj/release-m82 = 记对了；答 ~/proj/release-lite-m82 = 记错；不知道/没提过 = 遗漏；其他
+    = 编造。
+
+    豁免：答磁盘上真实存在但用户未告知的路径（自行探索发现，带探索过程特征）判 dont_know。
+
+    判定关键：必须明确指定唯一路径才算对；并列多个候选或反问用户选哪个 = 未做决断，等同错误；绝不因提及正确路径就算对。'
+  verdict_map:
+    right: correct
+    stale: confusion
+    dont_know: omission
+    made_up: fabrication
+  anchors:
+  - reply: 主线配置是 ~/proj/release-m82。
+    expect_verdict: right
+  - reply: 主线配置是 ~/proj/release-lite-m82。
+    expect_verdict: stale
+  - reply: 这个我不记得了。
+    expect_verdict: dont_know
+- id: discriminate-g02-p2
+  kind: rule
+  after: probe
+  check:
+  - assert: memory.ever_contained
+    args:
+    - release-m82
+    then: correct
+  - assert: default
+    then: omission
+  evidence_ref:
+  - memory_snapshot

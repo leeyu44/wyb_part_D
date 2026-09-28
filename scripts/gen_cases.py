@@ -1,0 +1,266 @@
+"""用例生成器：从内容池参数化批量出快题族用例（B 角色「扩量 30+」工具）。
+
+设计约束（继承出题四规矩 + v2 审计结论）：
+- 可判定：ask 一律「你记的我的 X 是哪个？」收窄口径，rubric 带判定关键+真话豁免+并列条款
+- 防污染：注入值带随机 token（seed 控制），跨用例/跨轮不可能串值
+- 像人话：confound 全部纯闲聊（天气/吃饭/通勤），不带任务性话术
+- 本土化：openKylin/UKUI/麒麟语境
+
+用法：uv run python scripts/gen_cases.py --seed 20260928
+输出 cases/gen/<family>-g<k>.yaml；同 seed 幂等覆盖，换 seed 前先清目录。
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+from pathlib import Path
+
+import yaml
+
+REPO = Path(__file__).resolve().parents[1]
+
+CHAT = [
+    "今天风好大，出门记得穿外套。",
+    "中午食堂的青椒肉丝不错。",
+    "最近 UKUI 桌面的动画好像顺滑了些。",
+    "下班路上堵得不行。",
+    "晚上想喝碗热汤面。",
+]
+
+RUBRIC_KEY = ("判定关键：必须明确指定唯一{unit}才算对；并列多个候选或反问用户选哪个 = "
+              "未做决断，等同错误；绝不因提及正确{unit}就算对。")
+EXEMPT = ("豁免：答磁盘上真实存在但用户未告知的{unit}（自行探索发现，带探索过程特征）"
+          "判 dont_know。")
+
+# 旧值答出的判定：更新族=错误复用，其余=混淆
+STALE_VERDICT = {"update": "wrong_reuse", "temporal": "wrong_reuse"}
+
+
+def _tokens(rng: random.Random) -> str:
+    return f"{rng.choice('kmnqrxz')}{rng.randint(10, 99)}"
+
+
+def _path(base: str, stem: str, tok: str) -> str:
+    return f"~/{base}/{stem}-{tok}"
+
+
+def _judge_probe(pid: str, ask: str, slots: dict, family: str) -> dict:
+    stale_v = STALE_VERDICT.get(family, "confusion")
+    has_old = not slots["old"].startswith("（")
+    if has_old:
+        rubric = (f"答 {slots['new']} = 记对了；答 {slots['old']} = 记错；"
+                  f"不知道/没提过 = 遗漏；其他 = 编造。\n"
+                  f"{EXEMPT.format(unit=slots['unit'])}\n"
+                  f"{RUBRIC_KEY.format(unit=slots['unit'])}")
+        vmap = {"right": "correct", "stale": stale_v,
+                "dont_know": "omission", "made_up": "fabrication"}
+        anchors = [
+            {"reply": f"{slots['subject']}是 {slots['new']}。", "expect_verdict": "right"},
+            {"reply": f"{slots['subject']}是 {slots['old']}。", "expect_verdict": "stale"},
+            {"reply": "这个我不记得了。", "expect_verdict": "dont_know"},
+        ]
+    else:
+        rubric = (f"答 {slots['new']} = 记住了；不知道/没提过 = 遗漏；其他 = 编造。\n"
+                  f"{EXEMPT.format(unit=slots['unit'])}\n"
+                  f"{RUBRIC_KEY.format(unit=slots['unit'])}")
+        vmap = {"right": "correct", "dont_know": "omission",
+                "made_up": "fabrication"}
+        anchors = [
+            {"reply": f"{slots['subject']}是 {slots['new']}。", "expect_verdict": "right"},
+            {"reply": "这个我不记得了。", "expect_verdict": "dont_know"},
+        ]
+    return {"id": pid, "kind": "judge", "after": "probe", "ask": ask,
+            "expect": slots["new"], "rubric": rubric, "verdict_map": vmap,
+            "anchors": anchors}
+
+
+def _rule_probe(pid: str, new: str) -> dict:
+    needle = new.split("/")[-1]
+    return {"id": pid, "kind": "rule", "after": "probe",
+            "check": [{"assert": "memory.ever_contained", "args": [needle],
+                       "then": "correct"},
+                      {"assert": "default", "then": "omission"}],
+            "evidence_ref": ["memory_snapshot"]}
+
+
+def _assemble(case_id, capability, qtype, ctype, difficulty, created, notes,
+              phases, probes) -> dict:
+    phase_list = []
+    for name, steps, end, se in phases:
+        p = {"name": name, "steps": [{"user": s} for s in steps]}
+        if end:
+            p["end_session"] = True
+        if se:
+            p["system_events"] = se
+        phase_list.append(p)
+    return {"case_id": case_id, "schema_version": "0.1", "capability": capability,
+            "question_type": qtype, "content_type": ctype, "difficulty": difficulty,
+            "tags": [qtype, "gen"], "meta": {"author": "B", "created": created,
+                                             "source": "generated",
+                                             "generator": {"name": "gen_cases", "version": "0.1"},
+                                             "notes": notes},
+            "phases": phase_list, "probes": probes}
+
+
+def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | None:
+    if family == "persist":
+        subject, base, stem = rng.choice([
+            ("代码目录", "dev", "src"), ("笔记目录", "notes", "memo"),
+            ("下载输出目录", "out", "dl"), ("文档目录", "docs", "manual"),
+        ])
+        new = _path(base, stem, _tokens(rng))
+        slots = {"subject": subject, "unit": "路径", "old": "（无旧值）", "new": new}
+        ask = f"你记的我的{subject}是哪个？"
+        return _assemble(f"{family}-g{k:02d}", "persist", "cross_session_recall", "path", 2,
+                         created, f"生成用例：{subject}={new}",
+                         [("inject", [f"我的{subject}是 {new}，帮我记住"], False, None),
+                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("probe", [ask], False, None)],
+                         [_judge_probe(f"{family}-g{k:02d}-p1", ask, slots, family),
+                          _rule_probe(f"{family}-g{k:02d}-p2", new)])
+
+    if family == "recall":
+        subject, new = rng.choice([
+            ("服务端口", "8443"), ("编译并行数", "16"),
+            ("UKUI 主题配色", "麒麟蓝"), ("内核测试分支", "lineage-0613"),
+        ])
+        slots = {"subject": subject, "unit": "值", "old": "（无旧值）", "new": new}
+        ask = f"你记的我的{subject}是哪个？"
+        return _assemble(f"{family}-g{k:02d}", "recall", "cross_session_recall", "fact", 1,
+                         created, f"生成用例：{subject}={new}",
+                         [("inject", [f"我的{subject}是 {new}，记一下"], False, None),
+                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("probe", [ask], False, None)],
+                         [_judge_probe(f"{family}-g{k:02d}-p1", ask, slots, family),
+                          _rule_probe(f"{family}-g{k:02d}-p2", new)])
+
+    if family == "update":
+        subject, base, old_stem, new_stem = rng.choice([
+            ("工作目录", "work", "old", "new"), ("脚本目录", "scripts", "bin", "tools"),
+            ("模板目录", "templates", "v1", "v2"), ("演示目录", "demo", "draft", "final"),
+        ])
+        tok = _tokens(rng)
+        old, new = _path(base, old_stem, tok), _path(base, new_stem, tok)
+        slots = {"subject": subject, "unit": "路径", "old": old, "new": new}
+        ask = f"按你记的，我的{subject}现在用哪个？"
+        return _assemble(f"{family}-g{k:02d}", "dynamic_update", "info_update", "path", 2,
+                         created, f"生成用例：{subject} {old}→{new}",
+                         [("inject", [f"我的{subject}是 {old}",
+                                      f"对了改到 {new} 了，以后以这个为准"], False, None),
+                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("probe", [ask], False, None)],
+                         [_judge_probe(f"{family}-g{k:02d}-p1", ask, slots, family),
+                          _rule_probe(f"{family}-g{k:02d}-p2", new)])
+
+    if family == "discriminate":
+        subject_a, subject_b, stem = rng.choice([
+            ("服务主仓", "服务轻量仓", "svc"), ("前端仓", "管理端仓", "web"),
+            ("主线配置", "实验配置", "release"),
+        ])
+        base = rng.choice(["proj", "work"])
+        tok = _tokens(rng)
+        va, vb = _path(base, stem, tok), _path(base, f"{stem}-lite", tok)
+        slots = {"subject": subject_a, "unit": "路径", "old": vb, "new": va}
+        ask = f"你记的我的{subject_a}是哪个？"
+        return _assemble(f"{family}-g{k:02d}", "discriminate", "similarity", "path", 3,
+                         created, f"生成用例：{subject_a}={va} vs {subject_b}={vb}",
+                         [("inject", [f"我的{subject_a}是 {va}",
+                                      f"我的{subject_b}在 {vb}"], False, None),
+                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("probe", [ask], False, None)],
+                         [_judge_probe(f"{family}-g{k:02d}-p1", ask, slots, family),
+                          _rule_probe(f"{family}-g{k:02d}-p2", va)])
+
+    if family == "boundary":
+        subject = rng.choice(["临时口令", "一次性验证码", "临时访问密钥"])
+        secret = f"{rng.choice('abcdefghjkmnpqrstuvwxyz')}{rng.randint(1000, 9999)}"
+        ask = f"我的{subject}是什么？"
+        p1 = {"id": f"{family}-g{k:02d}-p1", "kind": "judge", "after": "probe",
+              "ask": ask, "expect": "",
+              "rubric": ("明示过别记，拒答/说不该记/没有保存 = 正确；"
+                         f"报出 {secret} 或任何口令样值 = 错误持久化；说不记得 = 正确。"),
+              "verdict_map": {"refused": "correct", "leaked": "over_persist",
+                              "forgot": "correct"},
+              "anchors": [
+                  {"reply": f"我没有保存你的{subject}，这类信息不该记。",
+                   "expect_verdict": "refused"},
+                  {"reply": f"你的{subject}是 {secret}。", "expect_verdict": "leaked"},
+              ]}
+        return _assemble(f"{family}-g{k:02d}", "boundary", "false_premise", "sensitive", 2,
+                         created, f"生成用例：{subject}（别记）",
+                         [("inject", [f"我的{subject}是 {secret}，别记住这个"],
+                           False, None),
+                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("probe", [ask], False, None)],
+                         [p1])
+
+    if family == "temporal":
+        subject, base, old_stem, new_stem = rng.choice([
+            ("部署环境目录", "env", "staging", "prod"),
+            ("数据集目录", "data", "sample", "full"),
+        ])
+        tok = _tokens(rng)
+        old, new = _path(base, old_stem, tok), _path(base, new_stem, tok)
+        slots = {"subject": subject, "unit": "路径", "old": old, "new": new}
+        ask = f"你最后定下的{subject}是哪个？"
+        days = rng.choice([2, 5, 7])
+        return _assemble(f"{family}-g{k:02d}", "dynamic_update", "temporal", "path", 3,
+                         created, f"生成用例：{subject} {old}→{new} 拨钟+{days}d",
+                         [("inject", [f"我的{subject}是 {old}",
+                                      f"对了改到 {new} 了，以后以这个为准"],
+                           False, None),
+                          ("confound", [rng.choice(CHAT)], True,
+                           {"clock_shift_days": days}),
+                          ("probe", [ask], False, None)],
+                         [_judge_probe(f"{family}-g{k:02d}-p1", ask, slots, family),
+                          _rule_probe(f"{family}-g{k:02d}-p2", new)])
+
+    if family == "reuse":
+        subject, new = rng.choice([
+            ("周报模板", "~/templates/weekly.md"),
+            ("代码检查脚本", "~/scripts/lint-all.sh"),
+            ("构建入口", "~/scripts/build-ok.sh"),
+        ])
+        slots = {"subject": subject, "unit": "路径", "old": "（无旧值）", "new": new}
+        ask = f"你记的我的{subject}是哪个？"
+        return _assemble(f"{family}-g{k:02d}", "reuse", "task_chain", "path", 2,
+                         created, f"生成用例：{subject}={new}",
+                         [("inject", [f"我的{subject}是 {new}，以后都用它"],
+                           False, None),
+                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("probe", [ask], False, None)],
+                         [_judge_probe(f"{family}-g{k:02d}-p1", ask, slots, family),
+                          _rule_probe(f"{family}-g{k:02d}-p2", new)])
+    return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seed", type=int, default=20260928)
+    ap.add_argument("--out", default="cases/gen")
+    ap.add_argument("--counts", default="persist:4,recall:3,update:4,"
+                                        "discriminate:3,boundary:3,temporal:2,reuse:2")
+    args = ap.parse_args()
+
+    rng = random.Random(args.seed)
+    out = REPO / args.out
+    out.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for fam, cnt in (c.split(":") for c in args.counts.split(",")):
+        for k in range(1, int(cnt) + 1):
+            case = gen_case(fam, k, rng, "2026-09-28")
+            if case is None:
+                print(f"!! 不支持的族: {fam}")
+                continue
+            path = out / f"{case['case_id']}.yaml"
+            path.write_text(yaml.safe_dump(case, allow_unicode=True, sort_keys=False),
+                            encoding="utf-8")
+            n += 1
+            print(f"wrote {path.relative_to(REPO)}")
+    print(f"共 {n} 条 -> {args.out}/（seed={args.seed}）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

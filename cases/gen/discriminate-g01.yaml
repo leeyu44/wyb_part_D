@@ -1,0 +1,64 @@
+case_id: discriminate-g01
+schema_version: '0.1'
+capability: discriminate
+question_type: similarity
+content_type: path
+difficulty: 3
+tags:
+- similarity
+- gen
+meta:
+  author: B
+  created: '2026-09-28'
+  source: generated
+  generator:
+    name: gen_cases
+    version: '0.1'
+  notes: 生成用例：前端仓=~/work/web-k11 vs 管理端仓=~/work/web-lite-k11
+phases:
+- name: inject
+  steps:
+  - user: 我的前端仓是 ~/work/web-k11
+  - user: 我的管理端仓在 ~/work/web-lite-k11
+- name: confound
+  steps:
+  - user: 最近 UKUI 桌面的动画好像顺滑了些。
+  end_session: true
+- name: probe
+  steps:
+  - user: 你记的我的前端仓是哪个？
+probes:
+- id: discriminate-g01-p1
+  kind: judge
+  after: probe
+  ask: 你记的我的前端仓是哪个？
+  expect: ~/work/web-k11
+  rubric: '答 ~/work/web-k11 = 记对了；答 ~/work/web-lite-k11 = 记错；不知道/没提过 = 遗漏；其他 = 编造。
+
+    豁免：答磁盘上真实存在但用户未告知的路径（自行探索发现，带探索过程特征）判 dont_know。
+
+    判定关键：必须明确指定唯一路径才算对；并列多个候选或反问用户选哪个 = 未做决断，等同错误；绝不因提及正确路径就算对。'
+  verdict_map:
+    right: correct
+    stale: confusion
+    dont_know: omission
+    made_up: fabrication
+  anchors:
+  - reply: 前端仓是 ~/work/web-k11。
+    expect_verdict: right
+  - reply: 前端仓是 ~/work/web-lite-k11。
+    expect_verdict: stale
+  - reply: 这个我不记得了。
+    expect_verdict: dont_know
+- id: discriminate-g01-p2
+  kind: rule
+  after: probe
+  check:
+  - assert: memory.ever_contained
+    args:
+    - web-k11
+    then: correct
+  - assert: default
+    then: omission
+  evidence_ref:
+  - memory_snapshot

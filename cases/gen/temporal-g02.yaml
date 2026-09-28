@@ -1,0 +1,66 @@
+case_id: temporal-g02
+schema_version: '0.1'
+capability: dynamic_update
+question_type: temporal
+content_type: path
+difficulty: 3
+tags:
+- temporal
+- gen
+meta:
+  author: B
+  created: '2026-09-28'
+  source: generated
+  generator:
+    name: gen_cases
+    version: '0.1'
+  notes: 生成用例：部署环境目录 ~/env/staging-r78→~/env/prod-r78 拨钟+2d
+phases:
+- name: inject
+  steps:
+  - user: 我的部署环境目录是 ~/env/staging-r78
+  - user: 对了改到 ~/env/prod-r78 了，以后以这个为准
+- name: confound
+  steps:
+  - user: 晚上想喝碗热汤面。
+  end_session: true
+  system_events:
+    clock_shift_days: 2
+- name: probe
+  steps:
+  - user: 你最后定下的部署环境目录是哪个？
+probes:
+- id: temporal-g02-p1
+  kind: judge
+  after: probe
+  ask: 你最后定下的部署环境目录是哪个？
+  expect: ~/env/prod-r78
+  rubric: '答 ~/env/prod-r78 = 记对了；答 ~/env/staging-r78 = 记错；不知道/没提过 = 遗漏；其他 = 编造。
+
+    豁免：答磁盘上真实存在但用户未告知的路径（自行探索发现，带探索过程特征）判 dont_know。
+
+    判定关键：必须明确指定唯一路径才算对；并列多个候选或反问用户选哪个 = 未做决断，等同错误；绝不因提及正确路径就算对。'
+  verdict_map:
+    right: correct
+    stale: wrong_reuse
+    dont_know: omission
+    made_up: fabrication
+  anchors:
+  - reply: 部署环境目录是 ~/env/prod-r78。
+    expect_verdict: right
+  - reply: 部署环境目录是 ~/env/staging-r78。
+    expect_verdict: stale
+  - reply: 这个我不记得了。
+    expect_verdict: dont_know
+- id: temporal-g02-p2
+  kind: rule
+  after: probe
+  check:
+  - assert: memory.ever_contained
+    args:
+    - prod-r78
+    then: correct
+  - assert: default
+    then: omission
+  evidence_ref:
+  - memory_snapshot

@@ -1,0 +1,64 @@
+case_id: update-g01
+schema_version: '0.1'
+capability: dynamic_update
+question_type: info_update
+content_type: path
+difficulty: 2
+tags:
+- info_update
+- gen
+meta:
+  author: B
+  created: '2026-09-28'
+  source: generated
+  generator:
+    name: gen_cases
+    version: '0.1'
+  notes: 生成用例：工作目录 ~/work/old-m71→~/work/new-m71
+phases:
+- name: inject
+  steps:
+  - user: 我的工作目录是 ~/work/old-m71
+  - user: 对了改到 ~/work/new-m71 了，以后以这个为准
+- name: confound
+  steps:
+  - user: 晚上想喝碗热汤面。
+  end_session: true
+- name: probe
+  steps:
+  - user: 按你记的，我的工作目录现在用哪个？
+probes:
+- id: update-g01-p1
+  kind: judge
+  after: probe
+  ask: 按你记的，我的工作目录现在用哪个？
+  expect: ~/work/new-m71
+  rubric: '答 ~/work/new-m71 = 记对了；答 ~/work/old-m71 = 记错；不知道/没提过 = 遗漏；其他 = 编造。
+
+    豁免：答磁盘上真实存在但用户未告知的路径（自行探索发现，带探索过程特征）判 dont_know。
+
+    判定关键：必须明确指定唯一路径才算对；并列多个候选或反问用户选哪个 = 未做决断，等同错误；绝不因提及正确路径就算对。'
+  verdict_map:
+    right: correct
+    stale: wrong_reuse
+    dont_know: omission
+    made_up: fabrication
+  anchors:
+  - reply: 工作目录是 ~/work/new-m71。
+    expect_verdict: right
+  - reply: 工作目录是 ~/work/old-m71。
+    expect_verdict: stale
+  - reply: 这个我不记得了。
+    expect_verdict: dont_know
+- id: update-g01-p2
+  kind: rule
+  after: probe
+  check:
+  - assert: memory.ever_contained
+    args:
+    - new-m71
+    then: correct
+  - assert: default
+    then: omission
+  evidence_ref:
+  - memory_snapshot
