@@ -11,10 +11,26 @@ import json
 import os
 import re
 import string
+import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 from memhall.schema.models_case import JudgeProbe
+
+# 网关 RPM 限额保护：同一把 key 共享的调用节流（超限会被掐 TLS 而非 429）
+_MIN_INTERVAL = float(os.environ.get("JUDGE_MIN_INTERVAL", "12"))
+_rate_lock = threading.Lock()
+_last_call = 0.0
+
+
+def _rate_limit() -> None:
+    global _last_call
+    with _rate_lock:
+        wait = _MIN_INTERVAL - (time.monotonic() - _last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _last_call = time.monotonic()
 
 
 @dataclass
@@ -164,12 +180,21 @@ class OpenAICompatJudge:
         )
 
     @classmethod
-    def pair_from_env(cls) -> Optional[tuple["OpenAICompatJudge", "OpenAICompatJudge"]]:
-        """环境变量齐（双 judge 跨家族）才返回，否则 None。"""
+    def pair_from_env(cls) -> Optional[tuple["OpenAICompatJudge", ...]]:
+        """按环境变量组装判卷组：JUDGE_A 必需，JUDGE_B 可选（留空=单判）。
+
+        单判省一半 RPM（网关限额实测个位数/分钟）；双判跨家族仲裁是
+        design.md 的强化项，限额放开后配 JUDGE_B 即恢复。
+        """
         try:
-            return cls.from_env("A"), cls.from_env("B")
+            a = cls.from_env("A")
         except KeyError:
             return None
+        try:
+            b = cls.from_env("B")
+        except KeyError:
+            return (a,)
+        return (a, b)
 
     def _post(self, payload: dict) -> str:
         """带持久连接与长退避的 POST：网关坏窗口实测分钟级，短退避无效。
@@ -178,8 +203,10 @@ class OpenAICompatJudge:
         TLS 握手恰是坏 record mac 放大器），失败即弃连重连。
         """
         import http.client
+        import threading
         import time as _t
         import urllib.parse
+        _rate_limit()
         u = urllib.parse.urlparse(self.base_url)
         host, port = u.hostname, u.port or 443
         path = (u.path.rstrip("/") or "") + "/chat/completions"
@@ -236,12 +263,23 @@ def _parse(raw: str, valid_keys: set[str]) -> Optional[_RawVerdict]:
 
 
 def dual_judge(probe: JudgeProbe, answer: str,
-               judge_a: OpenAICompatJudge, judge_b: OpenAICompatJudge) -> JudgeOutcome:
-    """双 judge 独立判 → 一致即出；不一致（或票无效）→ 仲裁；仲裁无效 → key=None。"""
+               judge_a: OpenAICompatJudge,
+               judge_b: OpenAICompatJudge | None = None) -> JudgeOutcome:
+    """单判（judge_b 缺省）：一票定案，无效票转人工。
+    双判：独立判 → 一致即出；不一致（或票无效）→ 仲裁；仲裁无效 → key=None。"""
     valid = set(probe.verdict_map.keys())
     ctx = dict(verdict_map=json.dumps(probe.verdict_map, ensure_ascii=False),
                ask=probe.ask, expect=probe.expect, rubric=probe.rubric, answer=answer)
     va = _parse(judge_a.complete(JUDGE_PROMPT.format(**ctx)), valid)
+
+    if judge_b is None:
+        if va:
+            return JudgeOutcome(va.key, va.confidence, va.evidence_refs,
+                                f"单判: {va.reason}",
+                                judge_a=judge_a.name, judge_a_raw=va.key)
+        return JudgeOutcome(None, 0.0, [], "单判输出无效，转人工复核",
+                            judge_a=judge_a.name)
+
     vb = _parse(judge_b.complete(JUDGE_PROMPT.format(**ctx)), valid)
 
     if va and vb and va.key == vb.key:

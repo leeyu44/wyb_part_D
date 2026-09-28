@@ -53,14 +53,14 @@ def _raw_verdict(key: str | None, probe: JudgeProbe) -> VerdictValue:
 
 
 def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: int,
-                   dual: Optional[tuple[OpenAICompatJudge, OpenAICompatJudge]]) -> Verdict:
+                   judges: Optional[tuple[OpenAICompatJudge, ...]]) -> Verdict:
     answer = _answer_for(store, probe.ask)
     outcome: JudgeOutcome
     decided_by: DecidedBy
 
-    if dual is not None:
+    if judges is not None:
         try:
-            outcome = dual_judge(probe, answer, *dual)
+            outcome = dual_judge(probe, answer, *judges)
             decided_by = DecidedBy.ARBITRATION if outcome.arbitrated else DecidedBy.JUDGE_A
             meta = JudgeMeta(
                 judge_a=JudgeMetaItem(model=outcome.judge_a or "",
@@ -122,12 +122,12 @@ def _rule_verdict(probe: RuleProbe, store: EvidenceStore, run_id: str, seq: int)
 
 
 def evaluate_case(case: MemoryCase, store: EvidenceStore, run_id: str,
-                  dual: Optional[tuple[OpenAICompatJudge, OpenAICompatJudge]] = None
+                  judges: Optional[tuple[OpenAICompatJudge, ...]] = None
                   ) -> list[Verdict]:
     out: list[Verdict] = []
     for i, probe in enumerate(case.probes, start=1):
         if isinstance(probe, RuleProbe):
             out.append(_rule_verdict(probe, store, run_id, i))
         else:
-            out.append(_judge_verdict(probe, store, run_id, i, dual))
+            out.append(_judge_verdict(probe, store, run_id, i, judges))
     return out

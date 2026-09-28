@@ -64,9 +64,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
     adapter = adapters[args.adapter]()
 
-    dual = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
-    if args.judge == "dual" and dual is None:
-        print("缺少 JUDGE_A_/JUDGE_B_ 环境变量，回退脚本判卷", file=sys.stderr)
+    judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
+    if args.judge == "dual" and judges is None:
+        print("缺少 JUDGE_A_ 环境变量，回退脚本判卷", file=sys.stderr)
 
     run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter)
     run_dir = Path(args.out) / run_id
@@ -74,7 +74,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     verdicts = []
     for case, store in zip(cases, stores):
-        verdicts.extend(evaluate_case(case, store, run_id, dual))
+        verdicts.extend(evaluate_case(case, store, run_id, judges))
     metrics = _finish_run(run_dir, run_id, manifest, verdicts, {c.case_id: c for c in cases})
 
     print(f"run_id: {run_id}")
@@ -88,7 +88,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _load_verdicts(run_dir: Path, manifest: dict,
-                   cases: dict[str, MemoryCase], dual) -> list[Verdict]:
+                   cases: dict[str, MemoryCase], judges) -> list[Verdict]:
     """优先读已落盘 verdicts；缺则从证据 JSONL 重放评分（评测贵、评分便宜）。"""
     vpath = run_dir / "verdicts.jsonl"
     if vpath.exists():
@@ -103,7 +103,7 @@ def _load_verdicts(run_dir: Path, manifest: dict,
         ev_path = run_dir / "cases" / cid / "evidence.jsonl"
         store = EvidenceStore([Evidence.model_validate(json.loads(line))
                                for line in ev_path.read_text(encoding="utf-8").splitlines()])
-        verdicts.extend(evaluate_case(case, store, manifest["run_id"], dual))
+        verdicts.extend(evaluate_case(case, store, manifest["run_id"], judges))
     return verdicts
 
 
@@ -112,8 +112,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     repo_root = Path(__file__).resolve().parents[2]
     cases = {c.case_id: c for c in load_cases(repo_root / "cases" / "full")}
-    dual = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
-    verdicts = _load_verdicts(run_dir, manifest, cases, dual)
+    judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
+    verdicts = _load_verdicts(run_dir, manifest, cases, judges)
     metrics = _finish_run(run_dir, manifest["run_id"], manifest, verdicts, cases)
     print(f"报告已出: {run_dir / 'report.md'}（总体 {metrics['overall_score']:.1%}）")
     return 0
@@ -129,7 +129,7 @@ def main() -> None:
     p_run.add_argument("-c", "--cases", default="cases/full", help="用例目录")
     p_run.add_argument("-o", "--out", default="runs", help="输出根目录")
     p_run.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
-                       help="判卷方式（dual 需 JUDGE_A_/JUDGE_B_ 环境变量）")
+                       help="判卷方式（dual=LLM 判卷[单判或双判，按 JUDGE_B 是否配置]）")
     p_run.set_defaults(func=cmd_run)
 
     p_rep = sub.add_parser("report", help="出报告（缺 verdicts 时从证据重放评分）")
