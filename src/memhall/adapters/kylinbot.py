@@ -76,7 +76,12 @@ class KylinBotAdapter(AgentAdapter):
     def reset(self) -> None:
         rc, out, err = self.ch.run(
             "kylin-bot memory clear --yes 2>&1 | grep -E 'Cleared|Found' "
-            f"; rm -rf {' '.join(EVAL_WORKDIRS)}", timeout=120)
+            f"; rm -rf {' '.join(EVAL_WORKDIRS)}"
+            # workspace 根散落文件：agent 可能把用例产物写进自家工作区（如 README.md），
+            # 跨轮残留会污染后续行为；原始出厂文件白名单保留
+            "; find ~/.kylinbot/workspace -maxdepth 1 -type f "
+            "! -name 'HEARTBEAT.md' ! -name 'IDENTITY.md' ! -name 'SOUL.md' "
+            "! -name 'devices.db' -delete", timeout=120)
         if rc != 0 or "Cleared" not in out:
             # 库本来就空时 clear 无 Cleared 行，只要有 Total:0 语义即通过；
             # 这里 rc!=0 才算失败，空库场景由 stats 兜底验证
