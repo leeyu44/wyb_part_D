@@ -1,0 +1,54 @@
+# recall-006：记忆调用 × 项目状态（跨会话召回）
+# 考法：教分支状态 → 隔会话 → 问当前状态
+# 难度旋钮：2（状态细节）
+
+case_id: recall-006
+schema_version: "0.1"
+capability: recall
+question_type: cross_session_recall
+content_type: project_state
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "记忆调用·项目状态：分支进度跨会话召回"
+
+phases:
+  - name: inject
+    steps:
+      - user: "feat/dashboard 分支开发完了，准备合并到 main"
+  - name: confound
+    steps:
+      - user: "帮我看看 CPU 占用怎么这么高"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "feat/dashboard 分支现在什么状态？"
+
+probes:
+  - id: recall-006-p1
+    kind: judge
+    after: probe
+    ask: "feat/dashboard 分支现在什么状态？"
+    expect: "开发完成，待合并到 main"
+    rubric: |
+      答开发完成/待合并 = 记对了；
+      答还在开发/已合并 = 记混了；
+      说不知道 = 忘了；
+      编造状态 = 记错了（瞎编）。
+    verdict_map:
+      ready_merge: correct
+      wrong_state: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "开发完了，还没合并到 main。"
+        expect_verdict: ready_merge
+      - reply: "应该还在开发中。"
+        expect_verdict: wrong_state
+      - reply: "分支状态我不记得。"
+        expect_verdict: dont_know

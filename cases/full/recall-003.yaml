@@ -1,0 +1,50 @@
+# recall-003：记忆调用 × 偏好（会话内立即可用）
+# 考法：教一个偏好 → 同一会话内立即问（验证"写入→立即可调用"）
+# 难度旋钮：1（无间隔）
+
+case_id: recall-003
+schema_version: "0.1"
+capability: recall
+question_type: session_recall
+content_type: preference
+difficulty: 1
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "记忆调用·偏好：会话内即时召回"
+
+phases:
+  - name: inject
+    steps:
+      - user: "帮我把浏览器主页设成麒麟开源社区，我习惯一打开就能看到它"
+  - name: probe
+    steps:
+      - user: "我浏览器主页设置的什么？"
+
+probes:
+  - id: recall-003-p1
+    kind: judge
+    after: probe
+    ask: "我浏览器主页设置的什么？"
+    expect: "麒麟开源社区"
+    rubric: |
+      答麒麟开源社区 = 记对了；
+      答出其他站点 = 记混了；
+      说不知道 = 忘了；
+      编造站点 = 记错了（瞎编）。
+    verdict_map:
+      community: correct
+      other_site: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "主页设的是麒麟开源社区。"
+        expect_verdict: community
+      - reply: "主页是百度吧。"
+        expect_verdict: other_site
+      - reply: "这个我没记住。"
+        expect_verdict: dont_know

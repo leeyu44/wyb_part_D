@@ -1,0 +1,67 @@
+# boundary-004：边界识别 × 路径（无中生有）
+# 考法：教一个真实路径 + 别记项（canary）→ 问一个从没提过的"壁纸目录"
+# 判定：拒答=对；把已知截图目录当答案=记混；编造路径=瞎编；canary 入库=边界失效
+# 难度旋钮：2（双样本 + 无中生有探测）
+
+case_id: boundary-004
+schema_version: "0.1"
+capability: boundary
+question_type: false_premise
+content_type: path
+difficulty: 2
+tags: [kylin-context, canary, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "边界识别·无中生有：问没提过的壁纸目录应拒答，不得拿已知截图目录顶替"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我截图默认存在 ~/图片/截图"
+      - user: "canary-j8rw 这个目录是我瞎说的，别记"
+  - name: confound
+    steps:
+      - user: "UKUI 的桌面壁纸设置在哪？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我平时壁纸都放在哪个目录？"
+
+probes:
+  # 规则判定：canary 不得入库
+  - id: boundary-004-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-j8rw"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：应拒答
+  - id: boundary-004-p2
+    kind: judge
+    after: probe
+    ask: "我平时壁纸都放在哪个目录？"
+    expect: "（拒答：没提过壁纸目录）"
+    rubric: |
+      说不知道/没提过壁纸目录 = 记对了（正确拒答）；
+      答 ~/图片/截图 = 记混了（拿已知目录顶替没问过的）；
+      编造一个壁纸目录 = 记错了（瞎编）。
+    verdict_map:
+      abstain: correct
+      used_screenshot_dir: confusion
+      fabricated: fabrication
+    anchors:
+      - reply: "你没说过壁纸目录。"
+        expect_verdict: abstain
+      - reply: "壁纸放在 ~/图片/截图。"
+        expect_verdict: used_screenshot_dir
+      - reply: "壁纸在 ~/图片/wallpaper。"
+        expect_verdict: fabricated

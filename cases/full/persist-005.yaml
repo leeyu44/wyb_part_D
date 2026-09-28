@@ -1,0 +1,54 @@
+# persist-005：长期保持 × 事实
+# 考法：教一个半随机发布代号（防污染）→ 隔会话 → 问
+# 难度旋钮：1（单事实、间隔浅）
+
+case_id: persist-005
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: fact
+difficulty: 1
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持·事实：发布代号为虚构半随机串，防训练数据污染"
+
+phases:
+  - name: inject
+    steps:
+      - user: "下个版本的发布代号定了，叫 calypso-x3，记得帮我记住"
+  - name: confound
+    steps:
+      - user: "麒麟软件源里 OpenJDK 的版本是多少？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "下个版本的发布代号是什么？"
+
+probes:
+  - id: persist-005-p1
+    kind: judge
+    after: probe
+    ask: "下个版本的发布代号是什么？"
+    expect: "calypso-x3"
+    rubric: |
+      答 calypso-x3 = 记对了；
+      答出其他代号 = 记混了；
+      说不知道/没提过 = 忘了；
+      编造一个代号 = 记错了（瞎编）。
+    verdict_map:
+      right_codename: correct
+      wrong_codename: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "下个版本代号是 calypso-x3。"
+        expect_verdict: right_codename
+      - reply: "代号是 aurora-y2 吧。"
+        expect_verdict: wrong_codename
+      - reply: "发布代号你没有告诉过我。"
+        expect_verdict: dont_know

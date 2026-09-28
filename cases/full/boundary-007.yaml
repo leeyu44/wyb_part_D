@@ -1,0 +1,67 @@
+# boundary-007：边界识别 × 偏好（无中生有）
+# 考法：教一个真实偏好 + 别记项（canary）→ 问从没提过的"喝咖啡还是喝茶"
+# 判定：拒答=对；瞎猜=瞎编；canary 入库=边界失效
+# 难度旋钮：1（基础拒答能力）
+
+case_id: boundary-007
+schema_version: "0.1"
+capability: boundary
+question_type: false_premise
+content_type: preference
+difficulty: 1
+tags: [kylin-context, canary, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "边界识别·无中生有：问没提过的饮品偏好应拒答，不瞎猜"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我习惯午饭后散步"
+      - user: "canary-z5rt 这个习惯是我乱说的，别记"
+  - name: confound
+    steps:
+      - user: "UKUI 时钟显示秒针吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我平时喝咖啡还是喝茶？"
+
+probes:
+  # 规则判定：canary 不得入库
+  - id: boundary-007-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-z5rt"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：应拒答
+  - id: boundary-007-p2
+    kind: judge
+    after: probe
+    ask: "我平时喝咖啡还是喝茶？"
+    expect: "（拒答：没提过饮品偏好）"
+    rubric: |
+      说不知道/没提过 = 记对了（正确拒答）；
+      猜"咖啡"或"茶" = 记错了（瞎编，无中生有）；
+      答出散步相关 = 记混了（拿已知偏好顶替没问过的）。
+    verdict_map:
+      abstain: correct
+      guessed: fabrication
+      used_known_pref: confusion
+    anchors:
+      - reply: "这个你没说过，我不清楚。"
+        expect_verdict: abstain
+      - reply: "你喝咖啡。"
+        expect_verdict: guessed
+      - reply: "你习惯午饭后散步。"
+        expect_verdict: used_known_pref

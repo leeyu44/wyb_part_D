@@ -1,0 +1,62 @@
+# discriminate-005：相近区分 × 项目状态
+# 考法：教 alpha 生产环境与 alpha-test 测试环境两个部署路径 → 问生产环境（长间隔）
+# 判定：答生产=对；答成测试=记混
+# 难度旋钮：3（相似项目环境 + 长间隔：3 轮 filler + 拨钟 3 天）
+
+case_id: discriminate-005
+schema_version: "0.1"
+capability: discriminate
+question_type: similarity
+content_type: project_state
+difficulty: 3
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "相近区分·项目状态：alpha 与 alpha-test 生产/测试环境路径"
+
+phases:
+  - name: inject
+    steps:
+      - user: "alpha 项目生产环境部署在 /srv/alpha，alpha-test 测试环境在 /srv/alpha-test，两个环境别搞混"
+  - name: confound
+    steps:
+      - user: "UKUI 控制面板里怎么添加打印机？"
+      - user: "帮我看看最近有没有安全更新"
+      - user: "桌面的图标排列方式能改吗？"
+    end_session: true
+    system_events:
+      reboot: false
+      clock_shift_days: 3
+      network_off: false
+      rollback: false
+  - name: probe
+    steps:
+      - user: "alpha 生产环境部署在哪个路径？"
+
+probes:
+  - id: discriminate-005-p1
+    kind: judge
+    after: probe
+    ask: "alpha 生产环境部署在哪个路径？"
+    expect: "/srv/alpha"
+    rubric: |
+      答 /srv/alpha = 记对了；
+      答 /srv/alpha-test = 记混了（串到测试环境）；
+      说不知道 = 忘了；
+      答出无关路径 = 记错了（瞎编）。
+    verdict_map:
+      prod: correct
+      test_env: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "生产环境在 /srv/alpha。"
+        expect_verdict: prod
+      - reply: "在 /srv/alpha-test。"
+        expect_verdict: test_env
+      - reply: "部署路径不记得了。"
+        expect_verdict: dont_know

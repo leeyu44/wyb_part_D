@@ -1,0 +1,55 @@
+# update-005：动态更新 × 事实
+# 考法：会议时间改口（14:00 → 15:30）→ 问
+# 难度旋钮：1（单值改口）
+
+case_id: update-005
+schema_version: "0.1"
+capability: dynamic_update
+question_type: info_update
+content_type: fact
+difficulty: 1
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "动态更新·事实：会议时间改口后应用新值"
+
+phases:
+  - name: inject
+    steps:
+      - user: "明天的评审会 14:00 开始"
+      - user: "时间改了，改到 15:30"
+  - name: confound
+    steps:
+      - user: "帮我看看系统磁盘空间够不够"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "明天评审会几点开始？"
+
+probes:
+  - id: update-005-p1
+    kind: judge
+    after: probe
+    ask: "明天评审会几点开始？"
+    expect: "15:30"
+    rubric: |
+      答 15:30 = 记对了（用了新值）；
+      答 14:00 = 用错了（用了被覆盖的旧值）；
+      说不知道 = 忘了；
+      答出其他时间 = 记错了（瞎编）。
+    verdict_map:
+      new_time: correct
+      old_time: wrong_reuse
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "明天 15:30 开始。"
+        expect_verdict: new_time
+      - reply: "明天 14:00 开始。"
+        expect_verdict: old_time
+      - reply: "开会时间没记住。"
+        expect_verdict: dont_know

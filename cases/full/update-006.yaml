@@ -1,0 +1,55 @@
+# update-006：动态更新 × 项目状态
+# 考法：状态改口（已完成 → 回退未完成）→ 问
+# 难度旋钮：2（状态反转改口）
+
+case_id: update-006
+schema_version: "0.1"
+capability: dynamic_update
+question_type: info_update
+content_type: project_state
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "动态更新·项目状态：完成状态被回退反转"
+
+phases:
+  - name: inject
+    steps:
+      - user: "支付模块已经完成了"
+      - user: "等等，刚发现要回退，还没完成"
+  - name: confound
+    steps:
+      - user: "UKUI 日历能同步手机日历吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "支付模块现在完成了吗？"
+
+probes:
+  - id: update-006-p1
+    kind: judge
+    after: probe
+    ask: "支付模块现在完成了吗？"
+    expect: "未完成（已回退）"
+    rubric: |
+      答未完成/已回退 = 记对了（用了新值）；
+      答已完成 = 用错了（用了被覆盖的旧值）；
+      说不知道 = 忘了；
+      答非所问 = 记错了（瞎编）。
+    verdict_map:
+      not_done: correct
+      done: wrong_reuse
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "回退了，还没完成。"
+        expect_verdict: not_done
+      - reply: "支付模块已经完成了。"
+        expect_verdict: done
+      - reply: "模块状态不清楚。"
+        expect_verdict: dont_know

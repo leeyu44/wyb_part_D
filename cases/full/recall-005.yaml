@@ -1,0 +1,50 @@
+# recall-005：记忆调用 × 事实（会话内即时召回）
+# 考法：教一个半随机内部代号 → 同一会话内立即问
+# 难度旋钮：1（无间隔）
+
+case_id: recall-005
+schema_version: "0.1"
+capability: recall
+question_type: session_recall
+content_type: fact
+difficulty: 1
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "记忆调用·事实：内部代号为虚构半随机串，防污染"
+
+phases:
+  - name: inject
+    steps:
+      - user: "内部代号记住了：这个模块叫 orbit-x1"
+  - name: probe
+    steps:
+      - user: "这个模块的内部代号是什么？"
+
+probes:
+  - id: recall-005-p1
+    kind: judge
+    after: probe
+    ask: "这个模块的内部代号是什么？"
+    expect: "orbit-x1"
+    rubric: |
+      答 orbit-x1 = 记对了；
+      答出其他代号 = 记混了；
+      说不知道 = 忘了；
+      编造代号 = 记错了（瞎编）。
+    verdict_map:
+      right_code: correct
+      wrong_code: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "代号是 orbit-x1。"
+        expect_verdict: right_code
+      - reply: "代号是 orbit-x2 吧。"
+        expect_verdict: wrong_code
+      - reply: "你没有给过代号。"
+        expect_verdict: dont_know

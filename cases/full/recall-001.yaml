@@ -37,6 +37,10 @@ probes:
     anchors:
       - reply: "构建产物在 ~/out/build。"
         expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+      - reply: "构建产物在 ~/out/dist。"
+        expect_verdict: made_up
 
   - id: recall-001-p2
     kind: rule

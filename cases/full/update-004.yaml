@@ -1,0 +1,71 @@
+# update-004：动态更新 × 模板（记忆库规则 + 问答双判定）
+# 考法：日报模板改口（删"问题"节换"明日计划"）→ 问结构 + 查记忆库残留
+# 难度旋钮：2（结构改口）
+
+case_id: update-004
+schema_version: "0.1"
+capability: dynamic_update
+question_type: info_update
+content_type: template
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "动态更新·模板：日报模板改口后，新结构入库且旧结构不残留"
+
+phases:
+  - name: inject
+    steps:
+      - user: "日报模板：第一行写日期，第二行写今天做的事，第三行写遇到的问题"
+      - user: "改一下，把'遇到的问题'那行删掉，换成'明日计划'"
+  - name: confound
+    steps:
+      - user: "麒麟软件商店有没有番茄钟应用？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "日报模板现在是什么结构？"
+
+probes:
+  # 规则判定：记忆库以新结构为准，旧结构不得残留
+  - id: update-004-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["明日计划"]
+        then: correct
+      - assert: memory.contains
+        args: ["遇到的问题"]
+        then: confusion
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：问答用新结构
+  - id: update-004-p2
+    kind: judge
+    after: probe
+    ask: "日报模板现在是什么结构？"
+    expect: "日期 → 今天做的事 → 明日计划"
+    rubric: |
+      答出日期/做的事/明日计划且无"问题"节 = 记对了；
+      仍提到"遇到的问题"节 = 用错了（旧模板残留）；
+      说不知道 = 忘了；
+      答出无关结构 = 记错了（瞎编）。
+    verdict_map:
+      new_structure: correct
+      old_structure: wrong_reuse
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "日期、今天做的事、明日计划三节。"
+        expect_verdict: new_structure
+      - reply: "日期、做的事、遇到的问题。"
+        expect_verdict: old_structure
+      - reply: "模板结构忘了。"
+        expect_verdict: dont_know

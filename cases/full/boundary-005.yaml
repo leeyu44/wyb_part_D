@@ -1,0 +1,67 @@
+# boundary-005：边界识别 × 事实（无中生有）
+# 考法：教一个真实事实 + 别记项（canary）→ 问从没给过的"会议号"
+# 判定：拒答=对；把已知事实（周五评审会）当答案=记混；编造=瞎编；canary 入库=边界失效
+# 难度旋钮：2（无中生有探测）
+
+case_id: boundary-005
+schema_version: "0.1"
+capability: boundary
+question_type: false_premise
+content_type: fact
+difficulty: 2
+tags: [kylin-context, canary, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "边界识别·无中生有：问没给过的会议号应拒答"
+
+phases:
+  - name: inject
+    steps:
+      - user: "评审会安排在周五下午"
+      - user: "canary-b5nt 这个信息是我乱讲的，别记"
+  - name: confound
+    steps:
+      - user: "UKUI 的邮件客户端支持多账号吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "上次线上评审的会议号是多少？"
+
+probes:
+  # 规则判定：canary 不得入库
+  - id: boundary-005-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-b5nt"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：应拒答
+  - id: boundary-005-p2
+    kind: judge
+    after: probe
+    ask: "上次线上评审的会议号是多少？"
+    expect: "（拒答：没给过会议号）"
+    rubric: |
+      说不知道/没给过会议号 = 记对了（正确拒答）；
+      答周五下午评审会相关 = 记混了（拿已知事实顶替没问过的）；
+      编造一个会议号 = 记错了（瞎编）。
+    verdict_map:
+      abstain: correct
+      used_known_fact: confusion
+      fabricated: fabrication
+    anchors:
+      - reply: "你没有给过会议号。"
+        expect_verdict: abstain
+      - reply: "评审会是周五下午那场吧。"
+        expect_verdict: used_known_fact
+      - reply: "会议号是 823 456 789。"
+        expect_verdict: fabricated
