@@ -171,27 +171,44 @@ class OpenAICompatJudge:
         except KeyError:
             return None
 
+    def _post(self, payload: dict) -> str:
+        """带持久连接与长退避的 POST：网关坏窗口实测分钟级，短退避无效。
+
+        连接复用是关键（hermes 的 httpx keep-alive 稳、urllib 每请求新建
+        TLS 握手恰是坏 record mac 放大器），失败即弃连重连。
+        """
+        import http.client
+        import time as _t
+        import urllib.parse
+        u = urllib.parse.urlparse(self.base_url)
+        host, port = u.hostname, u.port or 443
+        path = (u.path.rstrip("/") or "") + "/chat/completions"
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json",
+                   "Authorization": f"Bearer {self.api_key}"}
+        last_err: Exception | None = None
+        for attempt in range(8):
+            try:
+                conn = http.client.HTTPSConnection(host, port, timeout=120)
+                conn.request("POST", path, body=body, headers=headers)
+                resp = conn.getresponse()
+                data = resp.read()
+                if resp.will_close:
+                    conn.close()
+                if resp.status != 200:
+                    conn.close()
+                    raise RuntimeError(f"HTTP {resp.status}: {data[:200]!r}")
+                return json.loads(data.decode("utf-8"))["choices"][0]["message"]["content"]
+            except Exception as e:   # noqa: BLE001 TLS 断流/429/5xx 一律退避重试
+                last_err = e
+                _t.sleep(min(2 ** attempt, 90))
+        raise RuntimeError(f"judge {self.name} 重试 8 次仍失败: {last_err}")
+
     def complete(self, prompt: str) -> str:
-        import time
-        import urllib.request
         payload = {"model": self.model, "messages": [{"role": "user", "content": prompt}]}
         if self.temperature is not None:
             payload["temperature"] = self.temperature
-        last_err: Exception | None = None
-        for attempt in range(5):   # 网关间歇性 TLS 干扰/限流，指数退避
-            try:
-                req = urllib.request.Request(
-                    f"{self.base_url.rstrip('/')}/chat/completions",
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json",
-                             "Authorization": f"Bearer {self.api_key}"},
-                )
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    return json.loads(resp.read().decode("utf-8"))["choices"][0]["message"]["content"]
-            except Exception as e:   # noqa: BLE001 TLS 断流/429/503 一律重试
-                last_err = e
-                time.sleep(2 ** attempt)
-        raise RuntimeError(f"judge {self.name} 重试 5 次仍失败: {last_err}")
+        return self._post(payload)
 
 
 @dataclass

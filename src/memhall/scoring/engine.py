@@ -52,20 +52,28 @@ def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: in
     decided_by: DecidedBy
 
     if dual is not None:
-        outcome = dual_judge(probe, answer, *dual)
-        decided_by = DecidedBy.ARBITRATION if outcome.arbitrated else DecidedBy.JUDGE_A
-        meta = JudgeMeta(
-            judge_a=JudgeMetaItem(model=outcome.judge_a or "",
-                                  verdict=VerdictValue(outcome.judge_a_raw)
-                                  if outcome.judge_a_raw else VerdictValue.INVALID_RUN,
-                                  agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
-            judge_b=JudgeMetaItem(model=outcome.judge_b or "",
-                                  verdict=VerdictValue(outcome.judge_b_raw)
-                                  if outcome.judge_b_raw else VerdictValue.INVALID_RUN,
-                                  agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
-            prompt_version="judge-prompt-v1",
-            arbiter="judge_a-arbiter" if outcome.arbitrated else None,
-        )
+        try:
+            outcome = dual_judge(probe, answer, *dual)
+            decided_by = DecidedBy.ARBITRATION if outcome.arbitrated else DecidedBy.JUDGE_A
+            meta = JudgeMeta(
+                judge_a=JudgeMetaItem(model=outcome.judge_a or "",
+                                      verdict=VerdictValue(outcome.judge_a_raw)
+                                      if outcome.judge_a_raw else VerdictValue.INVALID_RUN,
+                                      agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
+                judge_b=JudgeMetaItem(model=outcome.judge_b or "",
+                                      verdict=VerdictValue(outcome.judge_b_raw)
+                                      if outcome.judge_b_raw else VerdictValue.INVALID_RUN,
+                                      agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
+                prompt_version="judge-prompt-v1",
+                arbiter="judge_a-arbiter" if outcome.arbitrated else None,
+            )
+        except RuntimeError as e:
+            # judge 端点彻底不可用：降级脚本判卷，评测不因 judge 挂而报废
+            outcome = _scripted.judge(probe, answer)
+            decided_by = DecidedBy.HUMAN_REVIEW
+            meta = None
+            reason = f"[judge 降级] {e}: {outcome.reason}"
+            outcome = JudgeOutcome(outcome.key, 0.0, outcome.evidence_refs, reason)
     else:
         outcome = _scripted.judge(probe, answer)
         decided_by = DecidedBy.JUDGE_A
