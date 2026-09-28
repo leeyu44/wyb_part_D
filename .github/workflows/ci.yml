@@ -1,0 +1,32 @@
+# CI 门禁：题库 lint + 全量测试。
+# 对应两类高频事故：数据侧（schema/防污染/覆盖矩阵/离线可判）与代码侧（e2e/适配器回归）。
+name: CI
+
+on:
+  push:
+    branches: [main, win]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 = 本机开发环境；3.12 = openKylin 3.0 目标机
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 安装依赖（uv sync，--frozen 严格走 lockfile）
+        run: uv sync --dev --frozen
+
+      - name: 题库门禁 lint_cases.py
+        run: uv run python scripts/lint_cases.py
+
+      - name: 测试套件
+        run: uv run pytest tests/ -q
