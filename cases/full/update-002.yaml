@@ -37,6 +37,7 @@ probes:
       只答新路径 ~/docs/wiki-v2 = 更新成功；
       答旧路径 ~/docs/wiki = 仍用被覆盖的旧值；不知道 = 遗漏。
       豁免：答磁盘上真实存在但用户从未告知的路径（探索发现）判 dont_know；完全无中生有才判 fabricated。
+      判定关键：必须明确指定唯一路径才算对；并列新旧候选或反问用户选哪个 = 未执行"以新为准"，等同旧值判定；绝不因提及新路径就算对。
     verdict_map:
       new_path: correct
       old_path: wrong_reuse

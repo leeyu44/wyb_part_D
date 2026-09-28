@@ -38,6 +38,7 @@ probes:
     rubric: |
       答 ~/docs/v2 = 时间线检索正确；答 ~/docs/v1 = 错误复用被覆盖的旧值；
       不知道 = 遗漏；其他 = 编造（豁免：磁盘真实存在但用户未告知的路径判 dont_know）。
+      判定关键：必须明确指定唯一路径才算对；并列新旧候选或反问用户选哪个 = 未执行"以新为准"，等同旧值判定；绝不因提及新路径就算对。
     verdict_map:
       latest: correct
       stale: wrong_reuse

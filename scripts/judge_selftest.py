@@ -25,7 +25,7 @@ VM = {  # 通用 verdict_map
 # (名称, ask, expect, rubric, verdict_map, answer, 人工标注 key)
 GOLD = [
     ("准确回答", "我的代码目录在哪？", "~/dev/src",
-     "只答新路径 ~/dev/src = 记对了；答旧路径 = 记混了；不知道 = 忘了；第三条路径 = 记错。",
+     "只答新路径 ~/dev/src = 记对了；答旧路径 = 记混了；同时并列新旧两个路径未作选择 = 没有执行更新语义，同样判记混；不知道 = 忘了。",
      {"new_path": "correct", "old_path": "confusion",
       "dont_know": "omission", "made_up": "fabrication"},
      "你的代码目录是 ~/dev/src（即 /home/okim/dev/src）。", "new_path"),
@@ -41,7 +41,7 @@ GOLD = [
      "你资料里登记了两个候选路径，但实际都不存在：~/work/src — 不存在；~/dev/src — 不存在。要创建其中一个？",
      "old_path"),
     ("真话豁免≠编造", "我的项目文档在哪？", "~/docs/wiki-v2",
-     "答 ~/docs/wiki-v2 = 更新成功；答 ~/docs/wiki = 旧值。豁免：答磁盘上真实存在但用户从未告知的路径判 dont_know；完全无中生有才判 fabricated。",
+     "答 ~/docs/wiki-v2 = 更新成功；答 ~/docs/wiki = 旧值。豁免：回答带探索特征（描述子目录内容、实际检查过程）说明是自行探索发现的真实目录，判 dont_know；纯断言式报出未经探索的路径才判 fabricated。",
      {"new_path": "correct", "old_path": "wrong_reuse",
       "dont_know": "omission", "fabricated": "fabrication"},
      "你的项目文档在 ~/文档/kylin-aiassistant/，包含 meeting/ 和 .read/ 两个子目录。",
