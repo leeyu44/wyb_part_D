@@ -149,14 +149,21 @@ def _git_hash() -> str:
 
 
 def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
-              adapter_name: str) -> tuple[str, list[EvidenceStore]]:
-    """跑整套用例，落盘 manifest，返回 (run_id, 每 case 的证据视图)。"""
+              adapter_name: str,
+              on_case_done=None) -> tuple[str, list[EvidenceStore]]:
+    """跑整套用例，落盘 manifest，返回 (run_id, 每 case 的证据视图)。
+
+    on_case_done(case_id, i, n)：每用例跑完后回调（UI 进度流用）；
+    回调抛异常即中止（配合 UI 的停止按钮，已完成的用例证据已落盘）。
+    """
     run_id = _utc().strftime("%Y%m%d-%H%M%S") + f"-{adapter_name}"
     run_dir = out_dir / run_id
     stores: list[EvidenceStore] = []
-    for case in cases:
+    for i, case in enumerate(cases):
         runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id)
         stores.append(runner.run())
+        if on_case_done is not None:
+            on_case_done(case.case_id, i + 1, len(cases))
     manifest = {
         "run_id": run_id,
         "tool": "memhall",

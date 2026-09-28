@@ -10,6 +10,8 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
     "matplotlib>=3.8",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]

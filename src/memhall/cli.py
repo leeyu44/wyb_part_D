@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -136,6 +137,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if rep.usable_adapters() else 1
 
 
+def cmd_ui(args: argparse.Namespace) -> int:
+    from pathlib import Path as _P
+    _env_file = _P(__file__).resolve().parents[2] / ".env"
+    if _env_file.exists():  # UI 进程不吃手工 source，自动装 .env
+        for line in _env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
+    import threading
+    import webbrowser
+    from memhall.ui.app import create_app
+    app = create_app()
+    url = f"http://127.0.0.1:{args.port}/"
+    if not args.no_open:
+        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    print(f"麟阁 Web UI: {url}（Ctrl+C 退出）")
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    return 0
+
+
 def main() -> None:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="memhall",
@@ -159,6 +182,11 @@ def main() -> None:
     p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）")
+    p_ui.add_argument("--port", type=int, default=8300, help="端口（默认 8300）")
+    p_ui.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+    p_ui.set_defaults(func=cmd_ui)
 
     args = parser.parse_args()
     raise SystemExit(args.func(args))
