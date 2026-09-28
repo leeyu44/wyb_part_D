@@ -47,7 +47,7 @@
 | CPU / 内存 | 4 核 / 8 GB | 跑智能体 + 评测工具的最低舒适线 |
 | 磁盘 | 64 GB+（D 盘，宿主剩 257G） | 预留证据/快照空间 |
 | 固件 | UEFI（关闭 Secure Boot） | 按官方安装指南默认走 |
-| 快照 | 装完系统 + 基础依赖后立即拍 `clean-baseline` | 复现性根基；每次评测前回滚 |
+| 快照 | 实际已拍两层（2026-09-23）：`baseline`（系统+SSH+Hermes 装好后）、`agents-warm`（+kylin-agent，三智能体齐） | 日常开发/评测回滚用 `agents-warm`；`baseline` 是少一层变量的参照点 |
 
 ### VMware 安装完整步骤（详细版，照做即可）
 
@@ -116,7 +116,10 @@ sudo apt install -y python3 python3-venv python3-pip git open-vm-tools fonts-not
 | 智能体 | 获取方式 | 备注 |
 |---|---|---|
 | KylinBot | 3.0 桌面版内置 | 入口：任务栏「小K」图标，或应用菜单搜"小K / KylinBot"；首次使用先开预装「Token 中心」登录绑定设备领 token 额度；W1 任务：摸清其记忆存储位置（本地文件 / SQLite，无导出接口则直读） |
-| 第二个（OpenClaw / Hermes Agent / kylin-agent 三选一） | 装入同一虚拟机 | W2 内由 A 定死。选型情报（2026-09-23 核实）：① OpenClaw 与 Hermes Agent 均有公开学术评测先例（MPBench，arXiv 2606.04329）；② 3.0 官方口径：KylinBot 原生内置，OpenClaw"均可使用/完整运行"（获取方式装机后在软件商店搜"智能体"确认，或自行安装）；③ Hermes Agent（Nous Research 开源）不内置、需自行部署（`hermes setup`），但其记忆为 **Python + SQLite 本地存储**（FTS5 检索 + LLM 总结持久化 + 自动 skill 积累），对 `dump_memory` 适配器最友好——勿只看官方背书选型 |
+| kylin-agent 0.9.5 | ✅ 已装（2026-09-23，`sudo apt install kylin-agent kylin-agent-runtime-cache`，官方 huanghe 源，主包 5MB + runtime-cache 884MB） | openKylin 官方桌面智能体：`/usr/bin/kylin-agent`，应用菜单已有入口；依赖链含 ripgrep/xdotool/xclip/scrot/ffmpeg，runtime-cache 1.1.0 实为**内置 Playwright Chromium**（`/usr/local/share/kylin-agent-runtime/`）——浏览器自动化型，行动轨迹天然可观测；是否需 Token 中心登录 W2 实测。装后根分区剩 ~5G（apt clean 后 83%） |
+| Hermes Agent v0.21.3 | ✅ 已装（2026-09-23 源码部署 `~/.hermes/hermes-agent`，绕网方案见 §7.1） | Nous Research 开源，记忆为 **Python + SQLite 本地存储**（FTS5 检索 + LLM 总结持久化），对 `dump_memory` 适配器最友好；58 插件已加载完毕、启动验证通过；**API key 未配**（W2 `hermes setup`，届时勿走 Nous Portal 网页配对——境外站拉不动）。启动器 `~/.hermes/bin/hermes` 已烘焙清华镜像 + `BROWSER=/bin/true`（防误启动拉 Firefox 卡死） |
+
+> 未装备胎：OpenClaw（3.0 官方口径"均可使用"，软件商店搜"智能体"；与 Hermes 同有 MPBench 学术评测先例，arXiv 2606.04329）。W2 A 定夺：正式评测上 2 个（KylinBot + 二选一）还是 3 个全上。
 
 ## 3. 宿主机开发环境（Windows，已就绪）
 
