@@ -120,10 +120,32 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ensure_streams() -> None:
+    """窗口模式 exe（console=False）双击启动时无控制台，sys.stdout/stderr
+    为 None——print/logging 一碰就崩。重定向到 exe 同级 memhall.log，
+    写不进（只读目录等）则退临时目录。"""
+    if not (getattr(sys, "frozen", False)
+            and (sys.stdout is None or sys.stderr is None)):
+        return
+    import tempfile
+    from pathlib import Path
+    for base in (Path(sys.executable).resolve().parent,
+                 Path(tempfile.gettempdir())):
+        try:
+            log = (base / "memhall.log").open("a", encoding="utf-8")
+        except OSError:
+            continue
+        if sys.stdout is None:
+            sys.stdout = log
+        if sys.stderr is None:
+            sys.stderr = log
+        break
+
+
 def _utf8_console() -> None:
     """Windows 控制台默认 GBK 代码页，中文输出乱码——统一改 UTF-8。"""
     for stream in (sys.stdout, sys.stderr):
-        if stream.encoding and stream.encoding.lower() not in ("utf-8", "utf8"):
+        if stream and stream.encoding and stream.encoding.lower() not in ("utf-8", "utf8"):
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except AttributeError:
@@ -219,6 +241,7 @@ def _open_app_window(url: str) -> None:
 
 
 def main() -> None:
+    _ensure_streams()
     _utf8_console()
     if len(sys.argv) == 1 and getattr(sys, "frozen", False):
         sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
