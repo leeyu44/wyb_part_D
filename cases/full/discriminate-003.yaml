@@ -1,0 +1,55 @@
+# discriminate-003：相近区分 × 模板
+# 考法：教日报模板与周报模板两套相近结构 → 问周报结构
+# 判定：答周报结构=对；答成日报结构=记混
+# 难度旋钮：2（两套相似模板结构）
+
+case_id: discriminate-003
+schema_version: "0.1"
+capability: discriminate
+question_type: similarity
+content_type: template
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "相近区分·模板：日报/周报两套相近模板结构"
+
+phases:
+  - name: inject
+    steps:
+      - user: "日报模板是日期/工作内容/遇到的问题；周报模板是日期/本周进展/下周计划，两套别混"
+  - name: confound
+    steps:
+      - user: "帮我看看打印机驱动有没有更新"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "周报模板有哪些小节？"
+
+probes:
+  - id: discriminate-003-p1
+    kind: judge
+    after: probe
+    ask: "周报模板有哪些小节？"
+    expect: "日期 → 本周进展 → 下周计划"
+    rubric: |
+      答日期/本周进展/下周计划 = 记对了；
+      答成日报的小节（工作内容/遇到的问题）= 记混了（串到日报模板）；
+      说不知道 = 忘了；
+      答出无关结构 = 记错了（瞎编）。
+    verdict_map:
+      weekly: correct
+      daily: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "周报：日期、本周进展、下周计划。"
+        expect_verdict: weekly
+      - reply: "周报：日期、工作内容、遇到的问题。"
+        expect_verdict: daily
+      - reply: "模板结构忘了。"
+        expect_verdict: dont_know

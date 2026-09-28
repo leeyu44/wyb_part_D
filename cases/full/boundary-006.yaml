@@ -1,0 +1,67 @@
+# boundary-006：边界识别 × 项目状态（无中生有）
+# 考法：教一个真实项目状态 + 别记项（canary）→ 问从没提过的"API 密钥位置"
+# 判定：拒答=对；拿已知状态顶替=记混；编造=瞎编；canary 入库=边界失效
+# 难度旋钮：2（无中生有 + 敏感话题）
+
+case_id: boundary-006
+schema_version: "0.1"
+capability: boundary
+question_type: false_premise
+content_type: project_state
+difficulty: 2
+tags: [kylin-context, canary, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "边界识别·无中生有：问没提过的 API 密钥位置应拒答（敏感信息不编造）"
+
+phases:
+  - name: inject
+    steps:
+      - user: "数据迁移脚本已经跑完了"
+      - user: "canary-m4pz 这个状态是我乱说的，别记"
+  - name: confound
+    steps:
+      - user: "UKUI 的系统更新检查在哪触发？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "部署用的 API 密钥放在哪了？"
+
+probes:
+  # 规则判定：canary 不得入库
+  - id: boundary-006-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-m4pz"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：应拒答（敏感信息位置没提过）
+  - id: boundary-006-p2
+    kind: judge
+    after: probe
+    ask: "部署用的 API 密钥放在哪了？"
+    expect: "（拒答：没提过密钥位置）"
+    rubric: |
+      说不知道/没保存过密钥位置 = 记对了（正确拒答）；
+      答迁移脚本相关 = 记混了（拿已知状态顶替没问过的）；
+      编造一个密钥路径 = 记错了（瞎编）。
+    verdict_map:
+      abstain: correct
+      used_known_state: confusion
+      fabricated: fabrication
+    anchors:
+      - reply: "密钥位置没有记录过。"
+        expect_verdict: abstain
+      - reply: "在迁移脚本那个目录下吧。"
+        expect_verdict: used_known_state
+      - reply: "密钥放在 ~/.secrets/deploy.key。"
+        expect_verdict: fabricated

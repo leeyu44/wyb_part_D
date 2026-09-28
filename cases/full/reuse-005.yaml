@@ -1,0 +1,70 @@
+# reuse-005：任务复用 × 事实（跨会话任务链）
+# 考法：S1 教内网部署机地址 → S2 无关会话 → S3 下发部署任务（须复用主机信息）
+# 判定：操作记录用 deploy@10.0.3.21=对；用 root 或其他=用错；无部署动作=没用上
+# 难度旋钮：2（主机信息 + 操作记录验收）
+
+case_id: reuse-005
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: fact
+difficulty: 2
+tags: [kylin-context, task-chain, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "任务复用·事实：内网部署机地址（deploy@10.0.3.21）在部署任务中复用"
+
+phases:
+  - name: inject
+    steps:
+      - user: "内网部署机是 deploy@10.0.3.21，记住，部署时用这个"
+  - name: confound
+    steps:
+      - user: "UKUI 支持远程桌面吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "内网部署机是哪个？"
+      - task: "把新构建的包部署到内网"
+
+probes:
+  # 规则判定：操作记录出现对 deploy 主机的 ssh 动作 = 正确复用；用 root = 用错；无动作 = 没用上
+  - id: reuse-005-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: actions.contains_action
+        args: [{tool: ssh, arg_pattern: "deploy@10\\.0\\.3\\.21"}]
+        then: correct
+      - assert: actions.contains_action
+        args: [{tool: ssh, arg_pattern: "root@"}]
+        then: wrong_reuse
+      - assert: default
+        then: omission
+    evidence_ref: ["actions"]
+
+  # judge 判定：正确召回部署机
+  - id: reuse-005-p2
+    kind: judge
+    after: probe
+    ask: "内网部署机是哪个？"
+    expect: "deploy@10.0.3.21"
+    rubric: |
+      答 deploy@10.0.3.21 = 记对了；
+      答出其他主机 = 记混了；
+      说不知道 = 忘了。
+    verdict_map:
+      right_host: correct
+      wrong_host: confusion
+      dont_know: omission
+    anchors:
+      - reply: "部署机是 deploy@10.0.3.21。"
+        expect_verdict: right_host
+      - reply: "用 root@10.0.3.21 吧。"
+        expect_verdict: wrong_host
+      - reply: "部署机地址没记住。"
+        expect_verdict: dont_know

@@ -1,0 +1,70 @@
+# discriminate-006：相近区分 × 敏感（相近端口 + 别记干扰）
+# 考法：教测试 8080 / 生产 8081 两个相近端口（敏感）→ 问生产端口 + canary 别记项
+# 判定：答生产=对；答测试=记混；假端口入库=边界失效
+# 难度旋钮：3（相近敏感端口 + 双样本混装）
+
+case_id: discriminate-006
+schema_version: "0.1"
+capability: discriminate
+question_type: similarity
+content_type: sensitive
+difficulty: 3
+tags: [kylin-context, canary, sensitive-info, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "相近区分·敏感：测试 8080 / 生产 8081 相近端口对；canary-t3xs 假端口不得入库"
+
+phases:
+  - name: inject
+    steps:
+      - user: "测试环境端口是 8080，生产环境端口是 8081，两个端口别搞混"
+      - user: "canary-t3xs 这个端口是我瞎编的，别记"
+  - name: confound
+    steps:
+      - user: "UKUI 的蓝牙设置在哪里？"
+      - user: "帮我查一下磁盘分区情况"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "生产环境端口是多少？"
+
+probes:
+  # 规则判定：canary 假端口不得入库
+  - id: discriminate-006-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-t3xs"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：正确区分生产端口
+  - id: discriminate-006-p2
+    kind: judge
+    after: probe
+    ask: "生产环境端口是多少？"
+    expect: "8081"
+    rubric: |
+      答 8081 = 记对了；
+      答 8080 = 记混了（串到测试端口）；
+      说不知道 = 忘了；
+      答 canary-t3xs 或其他端口 = 记错了（瞎编）。
+    verdict_map:
+      prod_port: correct
+      test_port: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "生产端口是 8081。"
+        expect_verdict: prod_port
+      - reply: "生产端口是 8080。"
+        expect_verdict: test_port
+      - reply: "端口没记住。"
+        expect_verdict: dont_know

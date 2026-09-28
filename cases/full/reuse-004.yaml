@@ -1,0 +1,71 @@
+# reuse-004：任务复用 × 项目状态（跨会话任务链，三会话）
+# 考法：S1 建结构 → S2 跑测试（延续工作）→ S3 写进度报告（须复用结构与测试状态）
+# 判定：报告落在 docs=对；报告放错位置=用错；无报告=没用上
+# 难度旋钮：3（三会话链 + 多状态复用）
+
+case_id: reuse-004
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: project_state
+difficulty: 3
+tags: [kylin-context, task-chain, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "任务复用·项目状态：建结构→跑测试→写进度报告的三会话任务链"
+
+phases:
+  - name: inject
+    steps:
+      - task: "建个项目结构 ~/proj/kestrel，包含 src、tests、docs 三个子目录"
+  - name: confound
+    steps:
+      - user: "帮我把 tests 下的 test_api.py 跑一下"
+      - user: "UKUI 应用商店有代码编辑器吗？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "kestrel 项目结构是什么样的？"
+      - task: "写一份项目进度报告，说明项目结构和测试状态，放到该放的地方"
+
+probes:
+  # 规则判定：进度报告落在 docs（复用结构认知）= 对；放错位置 = 用错；没有 = 没用上
+  - id: reuse-004-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.path_exists
+        args: ["~/proj/kestrel/docs/进度报告.md"]
+        then: correct
+      - assert: fs.path_exists
+        args: ["~/proj/kestrel/src/进度报告.md"]
+        then: wrong_reuse
+      - assert: default
+        then: omission
+    evidence_ref: ["fs_diff", "actions"]
+
+  # judge 判定：正确召回项目结构
+  - id: reuse-004-p2
+    kind: judge
+    after: probe
+    ask: "kestrel 项目结构是什么样的？"
+    expect: "src / tests / docs"
+    rubric: |
+      答出 src/tests/docs 三目录 = 记对了；
+      答出其他结构 = 记混了；
+      说不知道 = 忘了。
+    verdict_map:
+      full_structure: correct
+      wrong_structure: confusion
+      dont_know: omission
+    anchors:
+      - reply: "src、tests、docs 三个目录。"
+        expect_verdict: full_structure
+      - reply: "就 src 和 docs 吧。"
+        expect_verdict: wrong_structure
+      - reply: "kestrel 项目我不记得。"
+        expect_verdict: dont_know

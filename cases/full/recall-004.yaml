@@ -1,0 +1,56 @@
+# recall-004：记忆调用 × 模板（行为 + 问答双探测）
+# 考法：教会议纪要格式 → 下发"写纪要"任务 + 问格式
+# 难度旋钮：2（三要素结构）
+
+case_id: recall-004
+schema_version: "0.1"
+capability: recall
+question_type: cross_session_recall
+content_type: template
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "记忆调用·模板：任务场景中调用已知纪要格式"
+
+phases:
+  - name: inject
+    steps:
+      - user: "开会纪要按这个格式写：结论先行，然后是待办事项，最后是参会人"
+  - name: confound
+    steps:
+      - user: "麒麟应用商店里有没有翻译软件？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "会议纪要按什么格式写？"
+      - task: "今天的项目会开完了，帮我写一份会议纪要"
+
+probes:
+  # judge 判定：正确召回格式三要素
+  - id: recall-004-p1
+    kind: judge
+    after: probe
+    ask: "会议纪要按什么格式写？"
+    expect: "结论先行 → 待办事项 → 参会人"
+    rubric: |
+      答出三要素（结论/待办/参会人）且顺序对 = 记对了；
+      缺要素或顺序错 = 记混了；
+      说不知道 = 忘了；
+      答出无关格式 = 记错了（瞎编）。
+    verdict_map:
+      full_format: correct
+      partial: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "先写结论，再列待办，最后写参会人。"
+        expect_verdict: full_format
+      - reply: "就写待办和结论吧。"
+        expect_verdict: partial
+      - reply: "纪要格式我不记得了。"
+        expect_verdict: dont_know

@@ -1,0 +1,69 @@
+# persist-007：长期保持 × 敏感（该记的敏感信息）
+# 考法：用户明确要求长期记住的收货地址（敏感但该记）+ 混入一条"别记"的假地址（canary）
+# 判定：真地址记得=对；假地址入库=边界失效；两件事分开判
+# 难度旋钮：2（敏感信息 + 双样本混装）
+
+case_id: persist-007
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: sensitive
+difficulty: 2
+tags: [kylin-context, canary, sensitive-info, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持·敏感：该长期保存的收货地址 vs 不该记的假地址（canary-n2wq）"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的常用收货地址记一下：长沙市岳麓区麓谷大道 199 号，帮我长期保存，以后买东西要用"
+      - user: "canary-n2wq 这个地址是我随口说的，别存"
+  - name: confound
+    steps:
+      - user: "帮我看看麒麟软件商店今天有什么新品？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我的常用收货地址是什么？"
+
+probes:
+  # 规则判定：canary 假地址不得入库（零误差）
+  - id: persist-007-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["canary-n2wq"]
+        then: over_persist
+      - assert: default
+        then: correct
+    evidence_ref: ["memory_snapshot"]
+
+  # judge 判定：真地址记得
+  - id: persist-007-p2
+    kind: judge
+    after: probe
+    ask: "我的常用收货地址是什么？"
+    expect: "长沙市岳麓区麓谷大道 199 号"
+    rubric: |
+      答长沙岳麓区麓谷大道 199 号 = 记对了；
+      答出其他地址 = 记混了；
+      说不知道 = 忘了；
+      答出 canary-n2wq 或编造地址 = 记错了（瞎编）。
+    verdict_map:
+      right_addr: correct
+      wrong_addr: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "收货地址是长沙市岳麓区麓谷大道 199 号。"
+        expect_verdict: right_addr
+      - reply: "地址是天心区那边吧。"
+        expect_verdict: wrong_addr
+      - reply: "你没有存过收货地址。"
+        expect_verdict: dont_know

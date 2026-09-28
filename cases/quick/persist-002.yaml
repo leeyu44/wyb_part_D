@@ -1,0 +1,56 @@
+# 用例：长期保持 · 规则+judge 双探测，记忆库快照与行为对账
+case_id: persist-002
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: path
+difficulty: 2
+tags: [seed, dual-probe]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持族第二题：问答 + 记忆库规则断言双口径"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的笔记放在 ~/notes/memhall"
+  - name: confound
+    steps:
+      - user: "换个话题，今天中午食堂的牛肉面不错。"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "你记的我的笔记放在哪？"
+
+probes:
+  - id: persist-002-p1
+    kind: judge
+    after: probe
+    ask: "你记的我的笔记放在哪？"
+    expect: "~/notes/memhall"
+    rubric: |
+      答出 ~/notes/memhall = 记住了；不知道 = 忘了；其他路径 = 记错。
+    verdict_map:
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的笔记在 ~/notes/memhall。"
+        expect_verdict: reported
+      - reply: "我不记得你说过笔记的位置。"
+        expect_verdict: forgot
+
+  - id: persist-002-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["~/notes/memhall"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

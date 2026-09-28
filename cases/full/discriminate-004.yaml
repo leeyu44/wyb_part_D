@@ -1,0 +1,55 @@
+# discriminate-004：相近区分 × 事实
+# 考法：教当前/下一版本号两个相近版本 → 问当前版本
+# 判定：答当前=对；答成下一版本=记混
+# 难度旋钮：2（相近版本号）
+
+case_id: discriminate-004
+schema_version: "0.1"
+capability: discriminate
+question_type: similarity
+content_type: fact
+difficulty: 2
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "相近区分·事实：3.1.2 与 3.2.1 相近版本号对"
+
+phases:
+  - name: inject
+    steps:
+      - user: "当前版本号是 3.1.2，下个版本是 3.2.1，别记混"
+  - name: confound
+    steps:
+      - user: "UKUI 应用商店怎么卸载应用？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "当前版本号是多少？"
+
+probes:
+  - id: discriminate-004-p1
+    kind: judge
+    after: probe
+    ask: "当前版本号是多少？"
+    expect: "3.1.2"
+    rubric: |
+      答 3.1.2 = 记对了；
+      答 3.2.1 = 记混了（串到下一版本号）；
+      说不知道 = 忘了；
+      答出其他版本号 = 记错了（瞎编）。
+    verdict_map:
+      current: correct
+      next: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "当前版本是 3.1.2。"
+        expect_verdict: current
+      - reply: "当前版本是 3.2.1。"
+        expect_verdict: next
+      - reply: "版本号没记住。"
+        expect_verdict: dont_know

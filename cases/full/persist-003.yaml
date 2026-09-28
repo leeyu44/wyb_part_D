@@ -1,0 +1,54 @@
+# persist-003：长期保持 × 偏好
+# 考法：教一个稳定偏好 → 隔会话 → 问是否还记得（该记的隔了会话还记得吗）
+# 难度旋钮：1（干扰少、间隔浅：1 轮 filler + 换会话）
+
+case_id: persist-003
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: preference
+difficulty: 1
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持·偏好：稳定偏好跨会话保持"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我平时都用 WPS 打开文档，习惯了，帮我记住这个"
+  - name: confound
+    steps:
+      - user: "UKUI 桌面的天气插件在哪里打开？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我平时用什么打开文档？"
+
+probes:
+  - id: persist-003-p1
+    kind: judge
+    after: probe
+    ask: "我平时用什么打开文档？"
+    expect: "WPS"
+    rubric: |
+      答 WPS / 用 WPS 打开 = 记对了；
+      答出其他办公软件（LibreOffice、OnlyOffice 等）= 记混了；
+      说不知道/没提过 = 忘了；
+      答非所问或编造 = 记错了（瞎编）。
+    verdict_map:
+      wps: correct
+      other_office: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "你习惯用 WPS 打开文档。"
+        expect_verdict: wps
+      - reply: "你之前说用 LibreOffice 打开。"
+        expect_verdict: other_office
+      - reply: "这个你没跟我说过。"
+        expect_verdict: dont_know
