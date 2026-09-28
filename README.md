@@ -42,6 +42,10 @@ memhall/
 ```bash
 uv sync --group dev          # 装依赖（uv，Python ≥ 3.11）
 
+uv run memhall doctor        # 一键发现本机/评测机智能体 + 评测环境体检
+# 三路探测：本机（PATH+配置目录+版本）、openKylin VM（SSH 单往返复合探测，
+# 含 brain.db 记忆库在位）、环境就绪度（密钥/SSH/网关可达），仿 brew doctor
+
 # 一轮评测（Mock 适配器，离线零成本，全链路出报告）
 uv run memhall run -a mock -c cases/full -o runs
 # 产物：runs/<run_id>/{manifest.json, verdicts.jsonl, metrics.json, radar.png, report.md}

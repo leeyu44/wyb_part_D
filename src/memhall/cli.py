@@ -129,6 +129,13 @@ def _utf8_console() -> None:
                 pass  # 非 TextIOWrapper（重定向到文件等）时不动
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from memhall.discovery import render_doctor, run_doctor
+    rep = run_doctor(scan_remote=not args.no_vm)
+    print(render_doctor(rep))
+    return 0 if rep.usable_adapters() else 1
+
+
 def main() -> None:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="memhall",
@@ -148,6 +155,10 @@ def main() -> None:
     p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
                        help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
+
+    p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
+    p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
+    p_doc.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args()
     raise SystemExit(args.func(args))
