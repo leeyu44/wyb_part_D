@@ -1,0 +1,7 @@
+"""memhall.report —— 指标、雷达图、报告。"""
+
+from memhall.report.metrics import compute_metrics
+from memhall.report.radar import render_radar, render_radar_from_metrics
+from memhall.report.report import render_report
+
+__all__ = ["compute_metrics", "render_radar", "render_radar_from_metrics", "render_report"]

@@ -1,0 +1,48 @@
+# 用例：长期保持 · 路径信息，跨会话后问答探测
+case_id: persist-001
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: path
+difficulty: 1
+tags: [kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "长期保持族：注入路径偏好，隔会话后问答探测"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的代码目录是 ~/work/proj/alpha"
+  - name: confound
+    steps:
+      - user: "顺便聊聊别的，麒麟天气今天不错。"
+      - user: "对了，帮我看看桌面的图标排列有没有对齐方式。"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我的代码目录在哪？"
+
+probes:
+  - id: persist-001-p1
+    kind: judge
+    after: probe
+    ask: "我的代码目录在哪？"
+    expect: "~/work/proj/alpha"
+    rubric: |
+      答出 ~/work/proj/alpha（或其等价展开）= 记住了；
+      说不知道/没提过 = 忘了；
+      答别的路径 = 记错了。
+    verdict_map:
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的代码目录在 ~/work/proj/alpha。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot

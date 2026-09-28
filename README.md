@@ -37,11 +37,27 @@ memhall/
 
 ## 使用（开发中）
 
+## 使用
+
 ```bash
-memhall doctor              # 自动发现已装智能体 + 生成配置 + 定位记忆文件
-memhall run --agent <cfg> --cases quick    # 冒烟评测
-memhall compare --agents all              # 批量对比出雷达图
+uv sync --group dev          # 装依赖（uv，Python ≥ 3.11）
+
+# 一轮评测（Mock 适配器，离线零成本，全链路出报告）
+uv run memhall run -a mock -c cases/full -o runs
+# 产物：runs/<run_id>/{manifest.json, verdicts.jsonl, metrics.json, radar.png, report.md}
+#       runs/<run_id>/cases/<case_id>/evidence.jsonl（每条判定可下钻证据哈希）
+
+uv run memhall report runs/<run_id>    # 对已有 run 重渲染报告
+
+# 双 LLM judge 判卷（可选，替代默认的离线脚本判卷；两 judge 需跨厂商）
+export JUDGE_A_BASE_URL=... JUDGE_A_MODEL=... JUDGE_A_KEY=...
+export JUDGE_B_BASE_URL=... JUDGE_B_MODEL=... JUDGE_B_KEY=...
+uv run memhall run -a mock --judge dual
+
+uv run pytest tests/ -q                # 测试（含端到端冒烟）
 ```
+
+判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁）。
 
 ## 许可
 
@@ -49,4 +65,4 @@ Apache-2.0（见 [LICENSE](LICENSE)）
 
 ## 状态
 
-W1（2026-09-23 起）：接口冻结与假数据全链路冒烟。里程碑见 team-plan.md。
+W2（2026-09-28）：MVP 闭环已通——Mock 适配器 × 12 用例（六能力族×2）→ 三阶段编排 → 证据落盘 → 判卷 → 六维雷达图 + 报告，一条命令出全。下一站：真智能体（KylinBot / Hermes）适配器接入。里程碑见 team-plan.md。

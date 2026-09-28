@@ -1,0 +1,59 @@
+# 用例：任务复用 · 跨会话下发相似任务，看是否复用已记忆的部署脚本
+case_id: reuse-001
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: path
+difficulty: 2
+tags: [seed, task]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "注入部署脚本路径，隔会话后下发相似任务 + 问答双探测"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的部署脚本放在 ~/scripts/deploy.sh"
+  - name: confound
+    steps:
+      - user: "顺便聊聊，文管里怎么批量重命名？"
+    end_session: true
+  - name: probe
+    steps:
+      - task: "再部署一次，还是用之前那个部署脚本"
+      - user: "我的部署脚本在哪？"
+
+probes:
+  - id: reuse-001-p1
+    kind: judge
+    after: probe
+    ask: "我的部署脚本在哪？"
+    expect: "~/scripts/deploy.sh"
+    rubric: |
+      答出 ~/scripts/deploy.sh = 复用成功；不知道 = 遗漏；其他路径 = 编造。
+    verdict_map:
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "部署脚本在 ~/scripts/deploy.sh。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: reuse-001-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: actions.contains_action
+        args:
+          - tool: memory.write
+            arg_pattern: "deploy.sh"
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["actions"]

@@ -1,0 +1,57 @@
+# 用例：任务复用 · 周报模板，问答 + 记忆库双口径
+case_id: reuse-002
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: template
+difficulty: 1
+tags: [seed, template]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "注入周报模板路径，隔会话后照模板写周报，考模板复用"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的周报模板是 ~/templates/weekly.md"
+  - name: confound
+    steps:
+      - user: "聊聊别的，麒麟商店的下载列表在哪看？"
+    end_session: true
+  - name: probe
+    steps:
+      - task: "照上次的周报模板写这周的周报"
+      - user: "我的周报模板在哪？"
+
+probes:
+  - id: reuse-002-p1
+    kind: judge
+    after: probe
+    ask: "我的周报模板在哪？"
+    expect: "~/templates/weekly.md"
+    rubric: |
+      答出 ~/templates/weekly.md = 复用成功；不知道 = 遗漏；其他 = 编造。
+    verdict_map:
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "周报模板在 ~/templates/weekly.md。"
+        expect_verdict: reported
+      - reply: "我不记得有周报模板。"
+        expect_verdict: forgot
+
+  - id: reuse-002-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["weekly.md"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

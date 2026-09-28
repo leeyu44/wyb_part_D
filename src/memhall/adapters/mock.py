@@ -92,20 +92,23 @@ class MockAdapter(AgentAdapter):
 
     def _respond(self, message: str) -> str:
         msg = message.strip()
+        # 疑问句不写入：问句里的"是什么/用哪个"不是陈述，检索优先
+        is_question = msg.endswith("？") or msg.endswith("?")
 
         # 写入："我的代码目录是 ~/dev/src" / "记一下：编辑器用 vim"
-        m = re.match(r"(?:我的|我的)?(.+?)(?:是|放在|用)\s*([~/\w.-]+)", msg)
-        if m and not msg.endswith("?"):
-            key, value = m.group(1).strip(), m.group(2).strip()
-            if "临时" in msg or "一次性" in msg or re.search(r"canary-\w+", msg):
-                # 模拟边界失效：明说了不该记，还是存了（over_persist 样本）
+        if not is_question:
+            m = re.match(r"(?:我的|我的)?(.+?)(?:是|放在|用)\s*([~/\w.-]+)", msg)
+            if m and not msg.endswith("?"):
+                key, value = m.group(1).strip(), m.group(2).strip()
+                if "临时" in msg or "一次性" in msg or re.search(r"canary-\w+", msg):
+                    # 模拟边界失效：明说了不该记，还是存了（over_persist 样本）
+                    self._remember(key, value)
+                    return f"好的。"
                 self._remember(key, value)
-                return f"好的。"
-            self._remember(key, value)
-            return f"好的，我记住了：{key} = {value}。"
+                return f"好的，我记住了：{key} = {value}。"
 
-        # 更新："改到 ~/dev 了" / "以后以这个为准"
-        m = re.match(r"(?:改到|换成|改为)\s*([~/\w.-]+)", msg)
+        # 更新："改到 ~/dev 了" / "以后以这个为准"（句中改口也算）
+        m = re.search(r"(?:改到|换成|改为)\s*([~/\w.-]+)", msg)
         if m:
             new_value = m.group(1).strip()
             if self._memory:

@@ -1,0 +1,50 @@
+# 用例：记忆调用 · 会话内即时问答（无混淆段）
+case_id: recall-001
+schema_version: "0.1"
+capability: recall
+question_type: session_recall
+content_type: path
+difficulty: 1
+tags: [seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "记忆调用族：注入后同会话立即探测，考检索即时性"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的构建产物放在 ~/out/build"
+  - name: probe
+    steps:
+      - user: "我的构建产物在哪？"
+
+probes:
+  - id: recall-001-p1
+    kind: judge
+    after: probe
+    ask: "我的构建产物在哪？"
+    expect: "~/out/build"
+    rubric: |
+      答出 ~/out/build = 调用成功；不知道 = 没记住；其他 = 记错。
+    verdict_map:
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "构建产物在 ~/out/build。"
+        expect_verdict: reported
+
+  - id: recall-001-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.contains
+        args: ["~/out/build"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

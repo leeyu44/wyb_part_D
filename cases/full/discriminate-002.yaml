@@ -1,0 +1,66 @@
+# 用例：相近区分 · 偏好对（主力/备份），问答探测
+case_id: discriminate-002
+schema_version: "0.1"
+capability: discriminate
+question_type: similarity
+content_type: preference
+difficulty: 1
+tags: [seed, similar-pair]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "两条同类偏好（主力/备份编辑器），探测是否张冠李戴"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的主力编辑器用 vim"
+      - user: "我的备份编辑器用 nano"
+  - name: confound
+    steps:
+      - user: "顺便问下，系统监视器怎么开机自启？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我的主力编辑器是什么？"
+      - user: "我的备份编辑器是什么？"
+
+probes:
+  - id: discriminate-002-p1
+    kind: judge
+    after: probe
+    ask: "我的主力编辑器是什么？"
+    expect: "vim"
+    rubric: |
+      答 vim = 正确；答 nano = 主备混淆；不知道 = 遗漏；其他 = 编造。
+    verdict_map:
+      right_one: correct
+      wrong_twin: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "你的主力编辑器是 vim。"
+        expect_verdict: right_one
+      - reply: "你的主力编辑器是 nano。"
+        expect_verdict: wrong_twin
+
+  - id: discriminate-002-p2
+    kind: judge
+    after: probe
+    ask: "我的备份编辑器是什么？"
+    expect: "nano"
+    rubric: |
+      答 nano = 正确；答 vim = 主备混淆；不知道 = 遗漏；其他 = 编造。
+    verdict_map:
+      right_one: correct
+      wrong_twin: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "你的备份编辑器是 nano。"
+        expect_verdict: right_one
+      - reply: "你的备份编辑器是 vim。"
+        expect_verdict: wrong_twin

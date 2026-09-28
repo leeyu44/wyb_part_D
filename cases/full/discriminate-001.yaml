@@ -1,0 +1,82 @@
+# 用例：相近区分 · 相似路径对，分别探测不串台
+case_id: discriminate-001
+schema_version: "0.1"
+capability: discriminate
+question_type: similarity
+content_type: path
+difficulty: 2
+tags: [seed, similar-pair]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "注入两条仅差版本后缀的路径，分别探测；答串=混淆"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的项目甲目录是 ~/proj/api"
+      - user: "我的项目乙目录是 ~/proj/api-v2"
+  - name: confound
+    steps:
+      - user: "聊聊别的，锁屏快捷键是什么？"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "我的项目甲目录在哪？"
+      - user: "我的项目乙目录在哪？"
+
+probes:
+  - id: discriminate-001-p1
+    kind: judge
+    after: probe
+    ask: "我的项目甲目录在哪？"
+    expect: "~/proj/api"
+    rubric: |
+      答 ~/proj/api（且不带 -v2）= 区分成功；答 ~/proj/api-v2 = 串台混淆；
+      不知道 = 遗漏；其他 = 编造。
+    verdict_map:
+      right_one: correct
+      wrong_twin: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "项目甲目录在 ~/proj/api。"
+        expect_verdict: right_one
+      - reply: "项目甲目录在 ~/proj/api-v2。"
+        expect_verdict: wrong_twin
+
+  - id: discriminate-001-p2
+    kind: judge
+    after: probe
+    ask: "我的项目乙目录在哪？"
+    expect: "~/proj/api-v2"
+    rubric: |
+      答 ~/proj/api-v2 = 区分成功；答 ~/proj/api（不带 -v2）= 串台混淆；
+      不知道 = 遗漏；其他 = 编造。
+    verdict_map:
+      right_one: correct
+      wrong_twin: confusion
+      dont_know: omission
+      fabricated: fabrication
+    anchors:
+      - reply: "项目乙目录在 ~/proj/api-v2。"
+        expect_verdict: right_one
+      - reply: "项目乙目录在 ~/proj/api。"
+        expect_verdict: wrong_twin
+
+  - id: discriminate-001-p3
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.entry_count
+        args:
+          - pattern: "~/proj/api"
+            cmp: eq
+            n: 2
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]
