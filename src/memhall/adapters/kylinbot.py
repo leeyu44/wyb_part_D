@@ -1,21 +1,25 @@
 """KylinBotAdapter —— openKylin 3.0 内置智能体「小K」适配器（SSH 远程驱动）。
 
-CLI 实测（2026-09-28 探明，environment.md §7 与 okim-bench/adapters/kylinbot.py 佐证）：
-- send:    `kylin-bot agent -m "<msg>"` 免交互单发；LLM 后端可 --provider/--model 覆盖
+CLI 实测（2026-09-28 send 实测校准，v0.7.5）：
+- send:    `kylin-bot agent -m "<msg>"` 免交互单发，每次独立进程（跨会话只靠 brain.db，
+           正中考点）；输出 = 运行日志（ISO 时间戳开头）+ 纯文本回复，需过滤
+- 后端:    openKylin 官方网关 llm-gateway.openkylin.top（config.toml，deepseek-v4-flash），
+           不占评测方网关配额
 - 记忆库:  ~/.kylinbot/workspace/memory/brain.db（SQLite+FTS5）
-           memories(id,key,content,category,session_id,importance,superseded_by)
-           superseded_by = 动态更新版本链证据（update 族判定金矿）
-- reset:   `kylin-bot memory clear`（官方清库命令，比删文件稳）
-- dump_actions: 暂 unknown（auditd/日志 W3 接）
+           memories(id UUID, key, content, category, superseded_by, created_at)
+           key 是语义键（user_name/code_directory），superseded_by = 版本链证据
+- reset:   `kylin-bot memory clear --yes`（实测 ✓ Cleared N/N）
+- dump_actions: 暂 unknown（W3 接日志后升级）
 """
 
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime
 
-from memhall.adapters.base import AgentAdapter
+from memhall.adapters.base import AgentAdapter, AgentUnavailable
 from memhall.adapters.remote import SshChannel, b64, elapsed_ms, now_utc
 from memhall.schema.evidence import (
     ActionDump,
@@ -26,48 +30,60 @@ from memhall.schema.evidence import (
 
 BRAIN_DB = "~/.kylinbot/workspace/memory/brain.db"
 
+# 用例注入的虚构工作区（评测专用 VM，reset 一并清掉防跨轮污染）
+EVAL_WORKDIRS = ["~/dev", "~/work", "~/proj", "~/docs", "~/notes",
+                 "~/out", "~/scripts", "~/templates", "~/demo"]
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_LOG_LINE = re.compile(r"^20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
 _DUMP_SRC = (
     "import json,sqlite3,os\n"
     f"db=os.path.expanduser('{BRAIN_DB}')\n"
     "c=sqlite3.connect('file:'+db+'?mode=ro',uri=True)\n"
-    "rows=c.execute('select id,key,content,category,superseded_by,created_at "
-    "from memories order by id').fetchall()\n"
+    "rows=c.execute(\"select id,key,content,category,superseded_by,created_at "
+    "from memories where category != 'conversation' "
+    "order by created_at\").fetchall()\n"
     "print(json.dumps(rows,ensure_ascii=False))\n"
 )
 
 
 class KylinBotAdapter(AgentAdapter):
-    """被测智能体 KylinBot（openKylin 3.0 桌面版内置）。"""
+    """被测智能体 KylinBot（openKylin 3.0 桌面版内置，官方网关后端）。"""
 
     name = "kylinbot"
 
     def __init__(self, channel: SshChannel | None = None):
         self.ch = channel or SshChannel()
-        self._model = os.environ.get("AGENT_LLM_MODEL", "")
+        self._clock_epoch: int | None = None
 
     def reset(self) -> None:
-        rc, out, err = self.ch.run("kylin-bot memory clear --all 2>&1 | tail -2")
-        if rc != 0:
-            raise RuntimeError(f"KylinBot 记忆清零失败: {(out + err).strip()[:300]}")
+        rc, out, err = self.ch.run(
+            "kylin-bot memory clear --yes 2>&1 | grep -E 'Cleared|Found' "
+            f"; rm -rf {' '.join(EVAL_WORKDIRS)}", timeout=120)
+        if rc != 0 or "Cleared" not in out:
+            # 库本来就空时 clear 无 Cleared 行，只要有 Total:0 语义即通过；
+            # 这里 rc!=0 才算失败，空库场景由 stats 兜底验证
+            rc2, out2, _ = self.ch.run("kylin-bot memory stats 2>&1 | grep Total",
+                                       timeout=60)
+            if rc2 != 0 or "Total:    0" not in out2:
+                raise RuntimeError(f"KylinBot 记忆清零失败: {(out + err).strip()[:300]}")
 
     def send(self, session_id: str, message: str) -> Reply:
-        provider = os.environ.get("AGENT_LLM_PROVIDER", "")
-        flags = f" --provider {provider}" if provider else ""
-        flags += f" --model {self._model}" if self._model else ""
-        cmd = (f'kylin-bot agent -m "$(echo {b64(message)} | base64 -d)"{flags} '
+        cmd = (f'timeout 280 kylin-bot agent -m "$(echo {b64(message)} | base64 -d)" '
                f"2>/dev/null")
         sent = now_utc()
         t0 = time.time()
-        rc, out, err = self.ch.run(cmd, timeout=300)
-        text = out.strip()
-        if rc != 0 and not text:
-            raise RuntimeError(f"kylin-bot 调用失败({rc}): {err.strip()[:300]}")
+        rc, out, _ = self.ch.run(cmd, timeout=300)
+        text = _strip_logs(out)
+        if not text:
+            raise AgentUnavailable(f"kylin-bot 无有效回复(rc={rc}): {out.strip()[:200]}")
         return Reply(session_id=session_id, text=text,
                      sent_at=sent, reply_at=now_utc(),
                      latency_ms=elapsed_ms(t0), token_usage=None)
 
     def end_session(self, session_id: str) -> None:
-        pass  # agent 单发模式无长会话
+        pass  # agent 单发模式每次独立进程，无长会话
 
     def dump_memory(self) -> MemorySnapshot:
         script = "python3 -c '" + _DUMP_SRC.replace("'", "'\\''") + "'"
@@ -78,7 +94,7 @@ class KylinBotAdapter(AgentAdapter):
                                   entries=[], raw=None)
         entries = [
             MemoryEntry(
-                entry_id=f"m-{mid:04d}",
+                entry_id=str(mid)[:8],
                 content=(f"[已被{superseded}取代] {content}" if superseded
                          else f"[{category}] {key}: {content}"),
                 created_at=_parse_ts(created_at),
@@ -92,12 +108,42 @@ class KylinBotAdapter(AgentAdapter):
     def dump_actions(self) -> ActionDump:
         return ActionDump(actions=[], coverage="unknown")
 
+    def clock_shift(self, days: int) -> None:
+        """VM 拨钟（sudo date -s），记录原时刻供恢复。"""
+        if days == 0:
+            return
+        rc, out, _ = self.ch.run("date +%s")
+        if rc != 0:
+            raise RuntimeError("拨钟前读取系统时间失败")
+        self._clock_epoch = int(out.strip())
+        rc, _, err = self.ch.run(
+            f"echo '{self.ch.password}' | sudo -S date -s '+{days} days' "
+            f">/dev/null 2>&1 && echo ok")
+        if rc != 0:
+            raise RuntimeError(f"拨钟失败: {err.strip()[:200]}")
+
+    def clock_restore(self) -> None:
+        if self._clock_epoch is None:
+            return
+        self.ch.run(
+            f"echo '{self.ch.password}' | sudo -S date -s @{self._clock_epoch} "
+            f">/dev/null 2>&1 && echo ok")
+        self._clock_epoch = None
+
     def fs_snapshot(self) -> list[str] | None:
         cmd = ("find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
                "-o -name node_modules -o -name .local -o -name .kylinbot \\) -prune -o "
                "-printf '%p\\n' 2>/dev/null | sed 's|^/home/okim|~|'")
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None
+
+
+def _strip_logs(out: str) -> str:
+    """去 ANSI 转义 + 滤运行日志行（ISO 时间戳开头），留纯文本回复。"""
+    clean = _ANSI.sub("", out)
+    keep = [ln for ln in clean.splitlines()
+            if ln.strip() and not _LOG_LINE.match(ln.strip())]
+    return "\n".join(keep).strip()
 
 
 def _parse_ts(ts):
