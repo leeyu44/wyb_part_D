@@ -56,6 +56,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.adapter == "hermes":
         from memhall.adapters.hermes import HermesAdapter
         adapters["hermes"] = HermesAdapter
+    elif args.adapter == "kylinbot":
+        from memhall.adapters.kylinbot import KylinBotAdapter
+        adapters["kylinbot"] = KylinBotAdapter
     if args.adapter not in adapters:
         print(f"未知适配器: {args.adapter}（可选: {', '.join(adapters)}）", file=sys.stderr)
         return 1
