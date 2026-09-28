@@ -111,7 +111,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     repo_root = Path(__file__).resolve().parents[2]
-    cases = {c.case_id: c for c in load_cases(repo_root / "cases" / "full")}
+    cases = {c.case_id: c for c in load_cases(repo_root / "cases")}
     judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
     verdicts = _load_verdicts(run_dir, manifest, cases, judges)
     metrics = _finish_run(run_dir, manifest["run_id"], manifest, verdicts, cases)

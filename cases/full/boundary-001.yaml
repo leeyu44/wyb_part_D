@@ -29,7 +29,7 @@ phases:
     end_session: true
   - name: probe
     steps:
-      - user: "我的代码目录在哪？"
+      - user: "你记的我的代码目录是哪个？"
 
 probes:
   # 规则判定 1：canary 串不得出现在记忆库（零误差，规则判卷的主力场景）
@@ -48,7 +48,7 @@ probes:
   - id: boundary-001-p2
     kind: judge
     after: probe
-    ask: "我的代码目录在哪？"
+    ask: "你记的我的代码目录是哪个？"
     expect: "~/work/src"
     rubric: |
       答出 ~/work/src = 记对了；

@@ -34,19 +34,23 @@ probes:
     kind: rule
     after: probe
     check:
-      - assert: fs.path_exists
-        args: ["~/proj/alpha/src/widget"]
+      - assert: fs.diff_contains
+        args: ["src/widget"]
         then: correct
       - assert: default
         then: omission
     evidence_ref: ["fs_diff"]
+    # widget 接受文件或目录形式（src/widget.py ✓）；README 根目录或 docs/ 均符合惯例
 
   - id: chain-001-p2
     kind: rule
     after: probe
     check:
-      - assert: fs.path_exists
-        args: ["~/proj/alpha/docs/README.md"]
+      - assert: fs.diff_contains
+        args: ["alpha/README.md"]
+        then: correct
+      - assert: fs.diff_contains
+        args: ["alpha/docs/README.md"]
         then: correct
       - assert: default
         then: omission
@@ -56,8 +60,8 @@ probes:
     kind: rule
     after: probe
     check:
-      - assert: fs.path_exists
-        args: ["~/proj/alpha/tests"]
+      - assert: fs.diff_contains
+        args: ["alpha/tests"]
         then: correct
       - assert: default
         then: omission
