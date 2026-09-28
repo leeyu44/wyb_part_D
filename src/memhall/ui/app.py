@@ -120,7 +120,9 @@ def create_app() -> FastAPI:
             vm, err = await asyncio.to_thread(scan_vm)
         except Exception as e:
             return {"error": f"{type(e).__name__}: {e}"[:300]}
-        return {"vm": [asdict(f) for f in vm], "vm_error": err}
+        same = err == "SAME-MACHINE"
+        return {"vm": [asdict(f) for f in vm],
+                "vm_error": "" if same else err, "same": same}
 
     @app.get("/api/doctor/env")
     async def doctor_env() -> dict:

@@ -269,7 +269,27 @@ _VM_PROBE = (
 )
 
 
+def _vm_is_self() -> bool:
+    """VM_HOST 指向本机（openKylin 原生模式）：本机扫描已覆盖全部智能体，
+    "评测机"段是 Windows 宿主 + 远端 VM 架构才需要的区分。"""
+    host = os.environ.get("VM_HOST", "").strip()
+    if not host:
+        return False
+    if host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+        return True
+    try:
+        import socket
+        if host == socket.gethostname():
+            return True
+        own = {i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None)}
+        return host in own
+    except OSError:
+        return False
+
+
 def scan_vm() -> tuple[list[Finding], str]:
+    if _vm_is_self():
+        return [], "SAME-MACHINE"
     if not os.environ.get("VM_PASS"):
         return [], "缺 VM_PASS（.env 未加载），跳过评测机扫描"
     try:
@@ -361,7 +381,9 @@ def render_doctor(rep: DoctorReport) -> str:
     lines.append("")
 
     lines.append("── 评测机智能体（openKylin VM）──")
-    if rep.vm_error:
+    if rep.vm_error == "SAME-MACHINE":
+        lines.append("  （openKylin 原生模式：本机即评测机，已并入上方本机扫描）")
+    elif rep.vm_error:
         lines.append(f"  ⚠ {rep.vm_error}")
     elif rep.vm:
         for f in rep.vm:

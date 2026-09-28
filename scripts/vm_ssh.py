@@ -44,7 +44,43 @@ def run(cmd: str, timeout: int = 900) -> int:
     return rc
 
 
+def run_bg(cmd: str, settle_s: float = 6.0) -> int:
+    """fire-and-forget：发完命令不等退出状态就关 channel。
+
+    为什么需要：远端命令里如果起了常驻后台进程（哪怕重定向了 fd），
+    sshd 迟迟不发 exit-status，recv_exit_status 会永久挂死本地进程。
+    启动服务类命令一律用这个模式；命令自身需 setsid/nohup 自保。"""
+    import time
+
+    cli = paramiko.SSHClient()
+    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    cli.connect(HOST, username=USER, password=os.environ["VM_PASS"], timeout=15)
+    try:
+        ch = cli.get_transport().open_session()
+        ch.exec_command(cmd)
+        out = b""
+        deadline = time.time() + settle_s
+        while time.time() < deadline:
+            if ch.recv_ready():
+                out += ch.recv(65536)
+            if ch.exit_status_ready() and not ch.recv_ready():
+                break
+            time.sleep(0.2)
+        rc = ch.recv_exit_status() if ch.exit_status_ready() else None
+        ch.close()
+    finally:
+        cli.close()
+    if out:
+        print(out.decode("utf-8", "replace"), end="")
+    print(f"[bg rc={rc}]")
+    return 0
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2 or "VM_PASS" not in os.environ:
-        sys.exit("用法: VM_PASS=xxx uv run python scripts/vm_ssh.py \"命令\"")
+        sys.exit("用法: VM_PASS=xxx uv run python scripts/vm_ssh.py [--bg] \"命令\"")
+    if sys.argv[1] == "--bg":
+        if len(sys.argv) < 3:
+            sys.exit('用法: vm_ssh.py --bg "命令"')
+        sys.exit(run_bg(sys.argv[2]))
     sys.exit(run(sys.argv[1]))

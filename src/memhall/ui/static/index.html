@@ -544,8 +544,8 @@ async function loadDoctor(fresh=false){
   body.innerHTML=`
     <h2.sec>本机智能体<span class="found-badge" id="nLocal" style="display:none"><b>0</b><small>个在册</small></span></h2>
     <div class="grid-cards" id="dgLocal"></div><div id="dgMissed"></div><div id="dgExtras"></div>
-    <h2.sec>评测机智能体（openKylin VM）<span class="found-badge" id="nVm" style="display:none"><b>0</b><small>个在册</small></span></h2>
-    <div class="grid-cards" id="dgVm"></div>
+    <div id="dgVmSec"><h2.sec>评测机智能体（openKylin VM）<span class="found-badge" id="nVm" style="display:none"><b>0</b><small>个在册</small></span></h2>
+    <div class="grid-cards" id="dgVm"></div></div>
     <h2.sec>评测环境就绪度</h2><div id="dgEnv"></div>
     <div class="actionbar" id="dgBar" style="display:none">
       <span class="hint" id="dgHint"></span>
@@ -603,6 +603,7 @@ async function loadDoctor(fresh=false){
   const pVm=done("vm",api("/api/doctor/vm"),(d)=>{
     const box=$("#dgVm");stopTick("vm");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
+    if(d.same){$("#dgVmSec").innerHTML=`<div class="empty" style="padding:10px 2px">openKylin 原生模式：本机即评测机，原生智能体（hermes · kylin-bot 等）已并入上方本机扫描</div>`;return}
     if(d.vm_error){box.innerHTML=`<div class="empty">${esc(d.vm_error)}</div>`;return}
     if(!d.vm.length){box.innerHTML='<div class="empty">评测机未发现智能体</div>';return}
     badge("#nVm",d.vm.length);

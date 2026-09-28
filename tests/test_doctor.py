@@ -75,6 +75,15 @@ def test_dsh_sentinel_and_extras_category(monkeypatch, tmp_path):
     assert all(f.name != "ollama" for f in agents)
 
 
+def test_scan_vm_same_machine(monkeypatch):
+    """openKylin 原生模式：VM_HOST 指向本机时不做远端探测，直接并段。"""
+    import memhall.discovery as disc
+    monkeypatch.setenv("VM_HOST", "127.0.0.1")
+    monkeypatch.setenv("VM_PASS", "whatever")
+    vm, err = disc.scan_vm()
+    assert err == "SAME-MACHINE" and vm == []
+
+
 def test_usable_adapters_always_has_mock():
     rep = DoctorReport(local=[], vm=[], env=[])
     assert "mock" in rep.usable_adapters()
