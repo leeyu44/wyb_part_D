@@ -42,11 +42,14 @@ ENV_PATH = REPO_ROOT / ".env"
 
 def _case_roots() -> list[Path]:
     """用例目录候选根：源码=仓库；onedir=exe 同级；onefile=解包目录（用例打进
-    exe 内），runs/.env 始终落 exe 同级。"""
+    exe 内）；deb 装机=/usr/share/memhall。runs/.env 始终落 exe 同级。"""
     roots = [REPO_ROOT]
     meipass = getattr(sys, "_MEIPASS", "")
     if meipass:
         roots.append(Path(meipass))
+    deb_share = Path("/usr/share/memhall")
+    if (deb_share / "cases").is_dir():
+        roots.append(deb_share)
     return roots
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -171,9 +174,6 @@ def create_app() -> FastAPI:
             if base.is_dir():
                 dirs += sorted(str(d.relative_to(root)).replace("\\", "/")
                                for d in base.iterdir() if d.is_dir())
-        for extra in (Path("/usr/share/memhall/cases"),):
-            if extra.is_dir():
-                dirs.append(str(extra))
         seen: set[str] = set()
         dirs = [d for d in dirs if not (d in seen or seen.add(d))]
         return {"dirs": dirs or ["cases/full"]}
