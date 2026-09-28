@@ -1,0 +1,63 @@
+# temporal-002：版本时间线 + 拨针 2 天 + "最后定下的"
+case_id: temporal-002
+schema_version: "0.1"
+capability: dynamic_update
+question_type: temporal
+content_type: path
+difficulty: 3
+tags: [temporal, clock-shift, version-line, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "v1→v2 两轮注入，拨钟+2天，考'最后定下的'时间线检索；用旧值=错误复用"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的项目文档放在 ~/docs/v1"
+      - user: "对了改到 ~/docs/v2 了，以后以这个为准"
+  - name: confound
+    steps:
+      - user: "这两天在整理文档，挺费时间的。"
+    end_session: true
+    system_events:
+      clock_shift_days: 2
+  - name: probe
+    steps:
+      - user: "你最后定下的项目文档是哪个？"
+
+probes:
+  - id: temporal-002-p1
+    kind: judge
+    after: probe
+    ask: "你最后定下的项目文档是哪个？"
+    expect: "~/docs/v2"
+    rubric: |
+      答 ~/docs/v2 = 时间线检索正确；答 ~/docs/v1 = 错误复用被覆盖的旧值；
+      不知道 = 遗漏；其他 = 编造（豁免：磁盘真实存在但用户未告知的路径判 dont_know）。
+    verdict_map:
+      latest: correct
+      stale: wrong_reuse
+      dont_know: omission
+      made_up: fabrication
+    anchors:
+      - reply: "最后定下的是 ~/docs/v2。"
+        expect_verdict: latest
+      - reply: "项目文档在 ~/docs/v1。"
+        expect_verdict: stale
+      - reply: "这个我不记得了。"
+        expect_verdict: dont_know
+
+  - id: temporal-002-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["~/docs/v2"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

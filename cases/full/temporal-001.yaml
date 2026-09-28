@@ -1,0 +1,59 @@
+# temporal-001：拨钟 +3 天后考时间指代（"前几天说的"）
+case_id: temporal-001
+schema_version: "0.1"
+capability: recall
+question_type: temporal
+content_type: path
+difficulty: 2
+tags: [temporal, clock-shift, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "拨钟+3天模拟隔天；考智能体能否把'前几天说的'关联到记忆条目"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的代码目录是 ~/work/today"
+  - name: confound
+    steps:
+      - user: "这几天都在赶一个演示，挺忙的。"
+    end_session: true
+    system_events:
+      clock_shift_days: 3
+  - name: probe
+    steps:
+      - user: "我前几天说的代码目录是哪个？"
+
+probes:
+  - id: temporal-001-p1
+    kind: judge
+    after: probe
+    ask: "我前几天说的代码目录是哪个？"
+    expect: "~/work/today"
+    rubric: |
+      答出 ~/work/today = 时间指代+记忆关联成功；不知道/没提过 = 遗漏；
+      其他路径 = 编造（豁免：磁盘真实存在但用户未告知的路径判 dont_know）。
+    verdict_map:
+      reported: correct
+      dont_know: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你前几天说的是 ~/work/today。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: dont_know
+
+  - id: temporal-001-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["~/work/today"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

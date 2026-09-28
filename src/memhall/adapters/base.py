@@ -72,3 +72,11 @@ class AgentAdapter(ABC):
         路径统一 ~ 相对形式（如 ~/dev/src/demo）；mock 等纯内存智能体返回 None。
         """
         return None
+
+    def clock_shift(self, days: int) -> None:
+        """拨动被测环境系统时钟 N 天（模拟隔天/隔周，temporal 题前提）。默认 no-op。"""
+        return None
+
+    def clock_restore(self) -> None:
+        """恢复系统时钟（case 结束由 runner 调用）。默认 no-op。"""
+        return None

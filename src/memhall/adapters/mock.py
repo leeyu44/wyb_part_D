@@ -132,6 +132,9 @@ class MockAdapter(AgentAdapter):
                 return f"记得，目前有：{items}。"
             return "我们还没聊过什么需要记的。"
 
+        # 问句但检索未命中：模拟"问了不知道"（拒答而非答非所问）
+        if is_question:
+            return "这个我不记得了。"
         return "好的。"
 
     def _remember(self, key: str, value: str) -> None:

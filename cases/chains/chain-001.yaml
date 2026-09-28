@@ -1,0 +1,64 @@
+# 任务链 1：项目结构链（design §4.3 原型）——三会话：建结构→放模块→补文档
+# 纯行为验收：文件树即证据（fs_diff），无 judge 依赖
+case_id: chain-001
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: project_state
+difficulty: 3
+tags: [task-chain, fs-evidence, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "跨 3 会话任务链：每会话独立目标，考行动复用历史结构；验文件树"
+
+phases:
+  - name: inject
+    steps:
+      - task: "帮我建个项目结构：~/proj/alpha 下建 src、docs、tests 三个目录"
+    end_session: true
+  - name: confound
+    steps:
+      - task: "把新模块 widget 放到该放的地方去"
+      - user: "对了，UKUI 的通知中心挺好用的。"
+    end_session: true
+  - name: probe
+    steps:
+      - task: "给这个项目补个 README.md，放到合适的位置"
+
+probes:
+  - id: chain-001-p1
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.path_exists
+        args: ["~/proj/alpha/src/widget"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["fs_diff"]
+
+  - id: chain-001-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.path_exists
+        args: ["~/proj/alpha/docs/README.md"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["fs_diff"]
+
+  - id: chain-001-p3
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.path_exists
+        args: ["~/proj/alpha/tests"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["fs_diff"]

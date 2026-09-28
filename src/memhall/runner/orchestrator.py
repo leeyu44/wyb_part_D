@@ -51,6 +51,7 @@ class CaseRunner:
         self.evidence_dir = evidence_dir
         self.store = EvidenceStore()
         self._seq = 0
+        self.clock_offset = 0
 
     def _collect(self, phase: str, etype: EvidenceType, payload: dict) -> None:
         self._seq += 1
@@ -61,7 +62,7 @@ class CaseRunner:
             phase=_phase_enum(phase),
             type=etype,
             collected_at=_utc(),
-            clock_offset_days=0,
+            clock_offset_days=self.clock_offset,
             payload=payload,
             sha256=_sha256(payload),
         )
@@ -71,31 +72,38 @@ class CaseRunner:
         self.adapter.reset()
         base_fs = self.adapter.fs_snapshot()
         session_id = "s-01"
-        for phase in self.case.phases:
-            messages: list[str] = []
-            replies: list[Reply] = []
-            for step in phase.steps:
-                text = step.user if step.user is not None else step.task
-                assert text is not None
-                messages.append(text)
-                replies.append(self.adapter.send(session_id, text))
-            self._collect(phase.name, EvidenceType.DIALOGUE,
-                          {"messages": messages,
-                           "replies": [r.model_dump(mode="json") for r in replies]})
-            # inject 后加采记忆快照（写入时机测试的数据源）
-            if phase.name == "inject":
-                snap = self.adapter.dump_memory()
-                self._collect("inject", EvidenceType.MEMORY_SNAPSHOT,
-                              snap.model_dump(mode="json"))
-            if phase.end_session:
-                self.adapter.end_session(session_id)
-                n = int(session_id.split("-")[1]) + 1
-                session_id = f"s-{n:02d}"
-        # probe 结束后全量采集
-        snap = self.adapter.dump_memory()
-        self._collect("probe", EvidenceType.MEMORY_SNAPSHOT, snap.model_dump(mode="json"))
-        dump = self.adapter.dump_actions()
-        self._collect("probe", EvidenceType.ACTIONS, dump.model_dump(mode="json"))
+        try:
+            for phase in self.case.phases:
+                se = phase.system_events
+                if se is not None and se.clock_shift_days:
+                    self.adapter.clock_shift(se.clock_shift_days)
+                    self.clock_offset += se.clock_shift_days
+                messages: list[str] = []
+                replies: list[Reply] = []
+                for step in phase.steps:
+                    text = step.user if step.user is not None else step.task
+                    assert text is not None
+                    messages.append(text)
+                    replies.append(self.adapter.send(session_id, text))
+                self._collect(phase.name, EvidenceType.DIALOGUE,
+                              {"messages": messages,
+                               "replies": [r.model_dump(mode="json") for r in replies]})
+                # inject 后加采记忆快照（写入时机测试的数据源）
+                if phase.name == "inject":
+                    snap = self.adapter.dump_memory()
+                    self._collect("inject", EvidenceType.MEMORY_SNAPSHOT,
+                                  snap.model_dump(mode="json"))
+                if phase.end_session:
+                    self.adapter.end_session(session_id)
+                    n = int(session_id.split("-")[1]) + 1
+                    session_id = f"s-{n:02d}"
+            # probe 结束后全量采集
+            snap = self.adapter.dump_memory()
+            self._collect("probe", EvidenceType.MEMORY_SNAPSHOT, snap.model_dump(mode="json"))
+            dump = self.adapter.dump_actions()
+            self._collect("probe", EvidenceType.ACTIONS, dump.model_dump(mode="json"))
+        finally:
+            self.adapter.clock_restore()
         # 文件系统 diff（适配器支持时）：before 快照 vs after 快照
         after_fs = self.adapter.fs_snapshot()
         if base_fs is not None and after_fs is not None:

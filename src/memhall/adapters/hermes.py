@@ -24,6 +24,7 @@ from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Rep
 
 HERMES_BIN = "~/.hermes/bin/hermes"
 MEM_DIR = "~/.hermes/memories"
+AGENT_LOG = "~/.hermes/logs/agent.log"
 
 # 用例注入的虚构工作区（评测专用 VM，reset 一并清掉防跨轮污染）
 EVAL_WORKDIRS = ["~/dev", "~/work", "~/proj", "~/docs", "~/notes",
@@ -39,6 +40,7 @@ class HermesAdapter(AgentAdapter):
 
     def __init__(self, channel: SshChannel | None = None):
         self.ch = channel or SshChannel()
+        self._log_offset = 0
         self._base_env = (
             f"export DEEPSEEK_API_KEY='{os.environ.get('AGENT_LLM_KEY', '')}' "
             f"DEEPSEEK_BASE_URL='{os.environ.get('AGENT_LLM_BASE_URL', '')}'; "
@@ -51,6 +53,9 @@ class HermesAdapter(AgentAdapter):
             f"rm -rf {' '.join(EVAL_WORKDIRS)} && echo ok")
         if rc != 0:
             raise RuntimeError(f"Hermes 记忆清零失败: {err.strip()[:300]}")
+        # 记 agent.log 偏移：dump_actions 只解析本 case 增量
+        rc, out, _ = self.ch.run(f"wc -c < {AGENT_LOG} 2>/dev/null || echo 0")
+        self._log_offset = int(out.strip() or 0)
 
     def send(self, session_id: str, message: str) -> Reply:
         cmd = (f"{self._base_env}"
@@ -89,7 +94,50 @@ class HermesAdapter(AgentAdapter):
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:
-        return ActionDump(actions=[], coverage="unknown")
+        """解析 agent.log 本 case 增量里的工具调用（agent.tool_executor 行）。"""
+        from memhall.schema.evidence import Action, ActionSource
+        cmd = (f"tail -c +{self._log_offset + 1} {AGENT_LOG} 2>/dev/null | "
+               f"grep -oE 'tool_executor: tool [a-z_0-9-]+ (completed|returned)' | "
+               f"sed 's/tool_executor: //'")
+        rc, out, _ = self.ch.run(cmd, timeout=30)
+        actions: list[Action] = []
+        if rc == 0:
+            for i, line in enumerate(out.splitlines(), 1):
+                parts = line.split()
+                if len(parts) >= 3 and parts[0] == "tool":
+                    actions.append(Action(
+                        action_id=f"a-{i:03d}",
+                        ts=now_utc(),
+                        tool=parts[1],
+                        args={},
+                        result=parts[2],
+                        source=ActionSource.AGENT_LOG,
+                    ))
+        return ActionDump(actions=actions,
+                          coverage="partial" if actions else "unknown")
+
+    def clock_shift(self, days: int) -> None:
+        """VM 拨钟（sudo date -s），记录原时刻供恢复。"""
+        if days == 0:
+            return
+        rc, out, _ = self.ch.run("date +%s")
+        if rc != 0:
+            raise RuntimeError("拨钟前读取系统时间失败")
+        self._clock_epoch = int(out.strip())
+        rc, _, err = self.ch.run(
+            f"echo '{self.ch.password}' | sudo -S date -s '+{days} days' "
+            f">/dev/null 2>&1 && echo ok")
+        if rc != 0:
+            raise RuntimeError(f"拨钟失败: {err.strip()[:200]}")
+
+    def clock_restore(self) -> None:
+        epoch = getattr(self, "_clock_epoch", None)
+        if epoch is None:
+            return
+        self.ch.run(
+            f"echo '{self.ch.password}' | sudo -S date -s @{epoch} "
+            f">/dev/null 2>&1 && echo ok")
+        self._clock_epoch = None
 
     def fs_snapshot(self) -> list[str] | None:
         """VM 用户区文件清单（~ 下 4 层，排除 hermes 自身与缓存噪音）。"""

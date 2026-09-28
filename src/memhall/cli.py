@@ -24,7 +24,7 @@ from memhall.schema.evidence import Verdict
 
 def load_cases(case_dir: Path) -> list[MemoryCase]:
     cases = []
-    for path in sorted(case_dir.glob("*.yaml")):
+    for path in sorted(case_dir.rglob("*.yaml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         cases.append(MemoryCase.model_validate(raw))
     return cases

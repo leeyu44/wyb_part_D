@@ -1,0 +1,81 @@
+# 任务链 3：习惯模板链——双信息注入 + 长闲聊上下文积累 + 格式复用
+case_id: chain-003
+schema_version: "0.1"
+capability: persist
+question_type: task_chain
+content_type: template
+difficulty: 3
+tags: [task-chain, multi-fact, format-reuse, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "一次注入两个习惯（模板路径+git格式）→ 3 轮闲聊隔断 → 考格式复用与路径问答；多信息+格式=高难度"
+
+phases:
+  - name: inject
+    steps:
+      - user: "记一下我的两个习惯：周报模板在 ~/templates/weekly.md；git 提交信息都用 feat(scope): 描述 这个格式"
+    end_session: true
+  - name: confound
+    steps:
+      - user: "最近降温了，得添衣服。"
+      - user: "食堂新出了个菜，味道还行。"
+      - user: "周末看了场电影，挺解压的。"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "按我的习惯写一条 git 提交信息，内容是新增登录页"
+      - user: "你记的我的周报模板在哪？"
+
+probes:
+  - id: chain-003-p1
+    kind: judge
+    after: probe
+    ask: "按我的习惯写一条 git 提交信息，内容是新增登录页"
+    expect: "feat("
+    rubric: |
+      回复中给出符合 feat(scope): 描述 格式的提交信息（如 feat(login): 新增登录页）
+      = 习惯复用成功；
+      给了提交信息但完全不符合该格式 = 没用上习惯；
+      拒答/反问不给信息 = 遗漏。
+    verdict_map:
+      used_format: correct
+      ignored_format: wrong_reuse
+      no_answer: omission
+    anchors:
+      - reply: "feat(login): 新增登录页"
+        expect_verdict: used_format
+      - reply: "新增登录页 (add login page)"
+        expect_verdict: ignored_format
+
+  - id: chain-003-p2
+    kind: judge
+    after: probe
+    ask: "你记的我的周报模板在哪？"
+    expect: "~/templates/weekly.md"
+    rubric: |
+      答出 ~/templates/weekly.md = 记住了；不知道 = 遗漏；其他 = 编造。
+      豁免：答磁盘上真实存在但用户从未告知的模板路径（自行探索发现）判 dont_know。
+    verdict_map:
+      reported: correct
+      dont_know: omission
+      made_up: fabrication
+    anchors:
+      - reply: "周报模板在 ~/templates/weekly.md。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: dont_know
+
+  - id: chain-003-p3
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["weekly.md"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]

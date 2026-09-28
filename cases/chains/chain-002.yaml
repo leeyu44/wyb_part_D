@@ -1,0 +1,59 @@
+# 任务链 2：部署复用链——记脚本→隔会话再部署→问答三口径
+case_id: chain-002
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: path
+difficulty: 2
+tags: [task-chain, kylin-context, seed]
+
+meta:
+  author: B
+  created: 2026-09-28
+  source: seed
+  generator: null
+  notes: "三会话：告知部署脚本（会话1）→ 隔会话再部署（会话2，考复用）→ 问答+库断言（会话3）"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的麒麟项目部署脚本是 ~/scripts/kylin-deploy.sh，以后部署都用它"
+    end_session: true
+  - name: confound
+    steps:
+      - task: "再部署一次测试环境"
+      - user: "顺便说下，今天的会开得挺久。"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "你记的我的部署脚本是哪个？"
+
+probes:
+  - id: chain-002-p1
+    kind: judge
+    after: probe
+    ask: "你记的我的部署脚本是哪个？"
+    expect: "~/scripts/kylin-deploy.sh"
+    rubric: |
+      答出 ~/scripts/kylin-deploy.sh = 复用成功；不知道/没记过 = 遗漏；其他路径 = 编造。
+      豁免：答磁盘上真实存在但用户从未告知的部署脚本路径（自行探索发现）判 dont_know。
+    verdict_map:
+      reported: correct
+      dont_know: omission
+      made_up: fabrication
+    anchors:
+      - reply: "部署脚本是 ~/scripts/kylin-deploy.sh。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: dont_know
+
+  - id: chain-002-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: memory.ever_contained
+        args: ["kylin-deploy.sh"]
+        then: correct
+      - assert: default
+        then: omission
+    evidence_ref: ["memory_snapshot"]
