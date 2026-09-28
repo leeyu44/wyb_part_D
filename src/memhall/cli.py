@@ -52,7 +52,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"未找到用例: {case_dir}", file=sys.stderr)
         return 1
 
-    adapters = {"mock": MockAdapter}
+    adapters: dict = {"mock": MockAdapter}
+    if args.adapter == "hermes":
+        from memhall.adapters.hermes import HermesAdapter
+        adapters["hermes"] = HermesAdapter
     if args.adapter not in adapters:
         print(f"未知适配器: {args.adapter}（可选: {', '.join(adapters)}）", file=sys.stderr)
         return 1
