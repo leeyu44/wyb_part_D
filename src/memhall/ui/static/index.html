@@ -173,6 +173,7 @@ select:focus,input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(55,14
   vertical-align:top;word-break:break-word}
 .verdict-table td.exp{color:var(--sub);max-width:430px}
 .cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.cfg-sub{font-size:12.5px;color:var(--sub);margin:-4px 0 12px;line-height:1.6;max-width:720px}
 .cfg-item{display:flex;flex-direction:column;gap:6px;min-width:0}
 .cfg-item label{font-size:12px;color:var(--sub);font-weight:500;
   font-family:var(--mono);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -305,7 +306,7 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
         <div class="formrow">
           <div class="field"><label>被测智能体</label>
             <select id="fAdapter"><option value="mock">mock（离线演示）</option>
-              <option value="hermes">hermes</option><option value="kylinbot">kylinbot</option></select></div>
+              <option value="hermes">hermes（VM）</option><option value="kylinbot">kylinbot（VM）</option></select></div>
           <div class="field"><label>用例集</label><select id="fCases"></select></div>
           <div class="field"><label>判卷</label>
             <select id="fJudge"><option value="scripted">脚本判卷（离线）</option>
@@ -376,10 +377,15 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
               写入 <span class="mono" id="cfgPath"></span>（不入 git）；密钥只回显「已设置」，留空即保持不变</div></div>
           <button class="act" id="btnSaveCfg">保存配置</button>
         </div>
-        <h2.sec>评测机（SSH）</h2><div class="cfg-grid" id="cfgVM"></div>
-        <h2.sec>被测智能体 LLM 网关</h2><div class="cfg-grid" id="cfgAgent"></div>
-        <h2.sec>判卷 LLM</h2><div class="cfg-grid" id="cfgJudge"></div>
-        <h2.sec>节流</h2><div class="cfg-grid" id="cfgMisc"></div>
+        <h2.sec>评测机 SSH —— hermes / kylinbot 走这条通道</h2>
+        <div class="cfg-sub">被测智能体跑在 openKylin VM 里：麟阁靠这条 SSH 驱动它发消息、取记忆证据，体检页"评测机"段同源</div>
+        <div class="cfg-grid" id="cfgVM"></div>
+        <h2.sec>判卷 LLM —— 选「LLM 判卷」时才联网</h2>
+        <div class="cfg-sub">脚本判卷离线零成本。选 LLM 判卷时用 JUDGE_A 组打分（当前 qwen 单判），JUDGE_B 配置后才启用双判仲裁。被测智能体自己的模型后端不在这里——各智能体安装时就已配好（如 kylinbot 的 config.toml）</div>
+        <div class="cfg-grid" id="cfgJudge"></div>
+        <h2.sec>网关防护 —— RPM 超限会掐连接</h2>
+        <div class="cfg-sub">判卷请求最小间隔 / kylinbot 单发间隔，单位秒；两者都为压住网关限速</div>
+        <div class="cfg-grid" id="cfgMisc"></div>
       </div>
     </section>
   </main>
@@ -875,7 +881,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeCase();}});
 /* ---------- 配置 ---------- */
 let cfgLoaded=false;
 const CFG_GROUPS=[
-  ["cfgVM",/^VM_/],["cfgAgent",/^AGENT_LLM_/],["cfgJudge",/^JUDGE_/],["cfgMisc",/^(KYLINBOT_SEND_INTERVAL|JUDGE_MIN_INTERVAL)$/]];
+  ["cfgVM",/^VM_/],["cfgJudge",/^JUDGE_(A|B)_/],["cfgMisc",/^(KYLINBOT_SEND_INTERVAL|JUDGE_MIN_INTERVAL)$/]];
 async function loadConfig(){
   try{
     const d=await api("/api/config");cfgLoaded=true;

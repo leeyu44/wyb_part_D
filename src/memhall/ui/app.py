@@ -214,6 +214,9 @@ def create_app() -> FastAPI:
                 elif adapter_name == "kylinbot":
                     from memhall.adapters.kylinbot import KylinBotAdapter
                     adapters["kylinbot"] = KylinBotAdapter
+                elif adapter_name == "opencode":
+                    from memhall.adapters.opencode import OpenCodeAdapter
+                    adapters["opencode"] = OpenCodeAdapter
                 if adapter_name not in adapters:
                     emit({"type": "error",
                           "msg": f"未知适配器: {adapter_name}"})

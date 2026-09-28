@@ -77,7 +77,13 @@ class CaseRunner:
             for phase in self.case.phases:
                 se = phase.system_events
                 if se is not None and se.clock_shift_days:
-                    self.adapter.clock_shift(se.clock_shift_days)
+                    try:
+                        self.adapter.clock_shift(se.clock_shift_days)
+                    except AdapterError as e:
+                        # 拨钟不支持（如 Windows 本机适配器）→ 本 case 运行无效，
+                        # 不能让一个 case 的环境限制打崩整套
+                        self._runtime_error = str(e)
+                        break
                     self.clock_offset += se.clock_shift_days
                 messages: list[str] = []
                 replies: list[Reply] = []

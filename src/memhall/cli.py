@@ -60,6 +60,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.adapter == "kylinbot":
         from memhall.adapters.kylinbot import KylinBotAdapter
         adapters["kylinbot"] = KylinBotAdapter
+    elif args.adapter == "opencode":
+        from memhall.adapters.opencode import OpenCodeAdapter
+        adapters["opencode"] = OpenCodeAdapter
     if args.adapter not in adapters:
         print(f"未知适配器: {args.adapter}（可选: {', '.join(adapters)}）", file=sys.stderr)
         return 1
