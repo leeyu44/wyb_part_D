@@ -22,7 +22,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable
+from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW
 from memhall.adapters.hermes import _strip_tui
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
@@ -95,7 +95,8 @@ class LocalHermesAdapter(AgentAdapter):
                  "--provider", "deepseek", "--model", model],
                 input=message, capture_output=True, encoding="utf-8",
                 errors="replace", cwd=str(self.workspace),
-                env=self._sandbox_env(), timeout=280)
+                env=self._sandbox_env(), timeout=280,
+                creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired as e:
             raise AgentUnavailable(f"hermes 超时: {e}") from e
         text = _strip_tui(_ANSI.sub("", r.stdout or ""))

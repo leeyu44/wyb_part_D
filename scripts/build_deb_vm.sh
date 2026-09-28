@@ -1,6 +1,6 @@
 #!/bin/bash
 # 在 openKylin 目标机上原生构建 memhall .deb（源码置于 ~/memhall 后执行）
-# 产物：~/deb-stage/memhall_0.2.0_all.deb（内置离线 wheels，安装不依赖网络）
+# 产物：~/deb-stage/memhall_0.2.1_all.deb（内置离线 wheels，安装不依赖网络）
 set -e
 SRC=${SRC:-$HOME/memhall}
 cd $SRC
@@ -28,7 +28,7 @@ chmod 755 $STAGE/usr/bin/memhall
 
 cat > $STAGE/DEBIAN/control <<'CEOF'
 Package: memhall
-Version: 0.2.0
+Version: 0.2.1
 Architecture: all
 Maintainer: MemHall Team <memhall@openkylin.example>
 Depends: python3 (>= 3.11)
@@ -55,5 +55,5 @@ REOF
 chmod 755 $STAGE/DEBIAN/postinst $STAGE/DEBIAN/prerm
 
 cd ~/deb-stage
-fakeroot dpkg-deb --root-owner-group -Zxz --build memhall memhall_0.2.0_all.deb 2>/dev/null || dpkg-deb -Zxz --build memhall memhall_0.2.0_all.deb
-ls -lh memhall_0.2.0_all.deb
+fakeroot dpkg-deb --root-owner-group -Zxz --build memhall memhall_0.2.1_all.deb 2>/dev/null || dpkg-deb -Zxz --build memhall memhall_0.2.1_all.deb
+ls -lh memhall_0.2.1_all.deb

@@ -24,7 +24,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable
+from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW
 from memhall.schema.evidence import (
     ActionDump,
     MemoryEntry,
@@ -112,7 +112,8 @@ class OpenCodeAdapter(AgentAdapter):
             r = subprocess.run(
                 [self._resolve_exe(), "run", "-m", self.model_ref, message],
                 capture_output=True, encoding="utf-8", errors="replace",
-                cwd=str(self.workspace), env=self._sandbox_env(), timeout=280)
+                cwd=str(self.workspace), env=self._sandbox_env(), timeout=280,
+                creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired as e:
             raise AgentUnavailable(f"opencode 超时: {e}") from e
         text = _strip_noise(r.stdout or "")

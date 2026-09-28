@@ -7,9 +7,14 @@ MockAdapter 在 adapters/mock.py —— 全队第一个能跑的适配器，也�
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 from memhall.schema.evidence import ActionDump, MemorySnapshot, Reply
+
+# Windows：无控制台进程（windowed exe）spawn 控制台子程序会弹黑窗，
+# 每发一条消息闪一下。统一带此 flag（stdout/stderr 走管道不受影响）。
+NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 # ---------- 异常（契约 01 §2）----------

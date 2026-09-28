@@ -238,7 +238,8 @@ def create_app() -> FastAPI:
                           if judge_mode == "dual" else None)
                 run_id, stores = run_suite(adapter, cases, out_root,
                                            adapter_name,
-                                           on_case_done=on_case_done)
+                                           on_case_done=on_case_done,
+                                           on_event=emit)
                 emit({"type": "phase", "msg": "评测完成，开始判卷…"})
                 verdicts = []
                 for case, store in zip(cases, stores):

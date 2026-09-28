@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memhall.adapters.base import AgentAdapter
-from memhall.adapters.base import AdapterError
+from memhall.adapters.base import AdapterError, NO_WINDOW
 from memhall.schema.evidence import (
     ActionDump,
     Evidence,
@@ -45,11 +45,12 @@ class CaseRunner:
     """单用例执行器：剧本 → 适配器调用 → 证据采集落盘。"""
 
     def __init__(self, adapter: AgentAdapter, case: MemoryCase, run_id: str,
-                 evidence_dir: Path):
+                 evidence_dir: Path, on_event=None):
         self.adapter = adapter
         self.case = case
         self.run_id = run_id
         self.evidence_dir = evidence_dir
+        self.on_event = on_event
         self.store = EvidenceStore()
         self._seq = 0
         self.clock_offset = 0
@@ -91,8 +92,17 @@ class CaseRunner:
                     text = step.user if step.user is not None else step.task
                     assert text is not None
                     messages.append(text)
+                    _safe_emit(self.on_event, {"type": "ask",
+                                               "case": self.case.case_id,
+                                               "phase": phase.name, "q": text})
                     try:
-                        replies.append(self.adapter.send(session_id, text))
+                        reply = self.adapter.send(session_id, text)
+                        replies.append(reply)
+                        _safe_emit(self.on_event, {"type": "reply",
+                                                   "case": self.case.case_id,
+                                                   "phase": phase.name,
+                                                   "a": reply.text,
+                                                   "ms": reply.latency_ms})
                     except AdapterError as e:
                         # 契约 01：适配器不可用 -> 后续步骤无意义，case 标运行无效
                         replies.append(Reply(
@@ -100,6 +110,9 @@ class CaseRunner:
                             text=f"[RUNTIME_ERROR] {e}",
                             sent_at=_utc(), reply_at=_utc(), latency_ms=0))
                         self._runtime_error = str(e)
+                        _safe_emit(self.on_event, {"type": "err",
+                                                   "case": self.case.case_id,
+                                                   "msg": str(e)})
                         break
                 if getattr(self, "_runtime_error", None):
                     break
@@ -111,6 +124,9 @@ class CaseRunner:
                     snap = self.adapter.dump_memory()
                     self._collect("inject", EvidenceType.MEMORY_SNAPSHOT,
                                   snap.model_dump(mode="json"))
+                    _safe_emit(self.on_event, {"type": "memory",
+                                               "case": self.case.case_id,
+                                               "n": len(snap.entries)})
                 if phase.end_session:
                     self.adapter.end_session(session_id)
                     n = int(session_id.split("-")[1]) + 1
@@ -118,6 +134,10 @@ class CaseRunner:
             # probe 结束后全量采集
             snap = self.adapter.dump_memory()
             self._collect("probe", EvidenceType.MEMORY_SNAPSHOT, snap.model_dump(mode="json"))
+            _safe_emit(self.on_event, {"type": "memory",
+                                       "case": self.case.case_id,
+                                       "n": len(snap.entries),
+                                       "final": True})
             dump = self.adapter.dump_actions()
             self._collect("probe", EvidenceType.ACTIONS, dump.model_dump(mode="json"))
         finally:
@@ -149,24 +169,40 @@ def _git_hash() -> str:
         return subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, check=True,
+            creationflags=NO_WINDOW,
         ).stdout.strip()
     except Exception:
         return "unknown"
 
 
+def _safe_emit(on_event, payload: dict) -> None:
+    """事件流给 UI 看过程用——它坏掉不能打崩评测。"""
+    if on_event is None:
+        return
+    try:
+        on_event(payload)
+    except Exception:
+        pass
+
+
 def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
               adapter_name: str,
-              on_case_done=None) -> tuple[str, list[EvidenceStore]]:
+              on_case_done=None, on_event=None) -> tuple[str, list[EvidenceStore]]:
     """跑整套用例，落盘 manifest，返回 (run_id, 每 case 的证据视图)。
 
     on_case_done(case_id, i, n)：每用例跑完后回调（UI 进度流用）；
-    回调抛异常即中止（配合 UI 的停止按钮，已完成的用例证据已落盘）。
+        回调抛异常即中止（配合 UI 的停止按钮，已完成的用例证据已落盘）。
+    on_event(ev)：逐条过程事件（ask/reply/memory/err/case_start），
+        供 UI 直播问答过程；回调异常被吞，不影响评测。
     """
     run_id = _utc().strftime("%Y%m%d-%H%M%S") + f"-{adapter_name}"
     run_dir = out_dir / run_id
     stores: list[EvidenceStore] = []
     for i, case in enumerate(cases):
-        runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id)
+        _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
+                              "i": i + 1, "n": len(cases)})
+        runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
+                            on_event=on_event)
         stores.append(runner.run())
         if on_case_done is not None:
             on_case_done(case.case_id, i + 1, len(cases))

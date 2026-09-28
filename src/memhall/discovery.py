@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from memhall.adapters.base import NO_WINDOW
+
 CACHE_PATH = Path.home() / ".memhall" / "doctor-cache.json"
 VERSION_TTL = 12 * 3600
 
@@ -254,7 +256,8 @@ def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
             return hit.get("version", "")
         try:
             r = subprocess.run([exe, "--version"], capture_output=True,
-                               encoding="utf-8", errors="replace", timeout=timeout_s)
+                               encoding="utf-8", errors="replace", timeout=timeout_s,
+                               creationflags=NO_WINDOW)
             ver = ((r.stdout or r.stderr).strip().splitlines()[0][:40]
                    if (r.stdout or r.stderr).strip() else "")
         except Exception:  # 超时/编码崩溃/找不到一律降级为"无版本"，不让体检崩

@@ -129,10 +129,15 @@ select:focus,input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(55,14
   overflow-y:auto;font-family:var(--mono);font-size:12.5px;line-height:1.8;
   color:#d4d4d8;box-shadow:inset 0 1px 4px rgba(0,0,0,.3)}
 .console .t{color:#52525b;margin-right:9px}
+.console span{white-space:pre-wrap;word-break:break-word}
 .console .lv-start{color:#7fb5fd}.console .lv-case{color:#a3c99a}
 .console .lv-phase{color:#dcbf7c}.console .lv-done{color:#8fce8f;font-weight:700}
 .console .lv-stopped{color:#dcbf7c}.console .lv-error{color:#e58a7c}
 .console .lv-info{color:#71717a}
+.console .lv-casehead{color:#c9b98a;font-weight:700}
+.console .lv-ask{color:#8ec5ff;font-weight:600}.console .lv-ask-dim{color:#62626b}
+.console .lv-reply{color:#ececf1}.console .lv-reply-dim{color:#9d9da6}
+.console .lv-mem{color:#7fd4a8}
 .result{margin-top:16px;display:none}
 .score-big{font-family:var(--serif);font-weight:700;color:var(--acc-ink);
   font-variant-numeric:tabular-nums;line-height:1.3}
@@ -492,6 +497,8 @@ function switchTab(name){
   if(name==="config"&&!cfgLoaded){loadConfig();}
 }
 $$("#nav button").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab)));
+const _h=location.hash.slice(1);
+if(_h&&$("#tab-"+_h))switchTab(_h);
 
 /* ---------- 体检 ---------- */
 let doctorLoaded=false,agentNames=null;
@@ -660,11 +667,11 @@ async function loadCaseDirs(){
     $("#fCases").innerHTML=d.dirs.map(x=>`<option>${esc(x)}</option>`).join("");
   }catch(e){$("#fCases").innerHTML='<option>cases/full</option>';}
 }
-function logLine(cls,msg){
+function logLine(cls,msg,title){
   const c=$("#console");
   const t=new Date().toTimeString().slice(0,8);
   const div=document.createElement("div");
-  div.innerHTML=`<span class="t">${t}</span><span class="${cls}">${esc(msg)}</span>`;
+  div.innerHTML=`<span class="t">${t}</span><span class="${cls}"${title?` title="${esc(title)}"`:""}>${esc(msg)}</span>`;
   c.appendChild(div);
   if(G){G.from(div,{y:6,opacity:0,duration:.22,ease:"power2.out"});}
   c.scrollTop=c.scrollHeight;
@@ -684,6 +691,19 @@ $("#btnStart").addEventListener("click",async()=>{
   es.onmessage=(ev)=>{
     const m=JSON.parse(ev.data);
     if(m.type==="start"){logLine("lv-start",`开始评测：${m.adapter} × ${m.cases}（${m.n_cases} 用例，${m.judge==="dual"?"LLM 判卷":"脚本判卷"}）`);}
+    else if(m.type==="case_start"){logLine("lv-casehead",`——【${m.i}/${m.n}】${m.case} ——`);}
+    else if(m.type==="ask"){
+      const tag=m.phase==="probe"?"考":m.phase==="inject"?"教":"扰";
+      logLine(m.phase==="probe"?"lv-ask":"lv-ask-dim",`${tag}｜${m.q}`);
+    }
+    else if(m.type==="reply"){
+      const dim=m.phase!=="probe";
+      const a=m.a.length>200?m.a.slice(0,200)+"…":m.a;
+      logLine(dim?"lv-reply-dim":"lv-reply",`答｜${a}（${(m.ms/1000).toFixed(1)}s）`,
+              m.a+(m.ms?`\n[${(m.ms/1000).toFixed(1)}s]`:""));
+    }
+    else if(m.type==="memory"){logLine("lv-mem",`记忆快照：${m.n} 条${m.final?"（本例终态）":""}`);}
+    else if(m.type==="err"){logLine("lv-error",`运行错误：${m.msg}`);}
     else if(m.type==="case"){
       logLine("lv-case",`[${m.i}/${m.n}] ${m.case} 完成`);
       $("#progLabel").textContent=`${m.case}`;
