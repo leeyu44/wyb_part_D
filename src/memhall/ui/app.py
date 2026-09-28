@@ -102,9 +102,9 @@ def create_app() -> FastAPI:
 
     # 分段端点：前端并行拉取，逐段点亮（体检总时长≈最慢一段而非三段之和）
     @app.get("/api/doctor/local")
-    async def doctor_local() -> dict:
+    async def doctor_local(fresh: bool = False) -> dict:
         from memhall.discovery import scan_local
-        rep = await asyncio.to_thread(scan_local)
+        rep = await asyncio.to_thread(scan_local, 4, fresh)
         return {"local": [asdict(f) for f in rep]}
 
     @app.get("/api/doctor/vm")

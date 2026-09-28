@@ -19,7 +19,9 @@ from memhall.discovery import (
 
 
 def test_scan_local_signal_matrix(monkeypatch, tmp_path):
-    monkeypatch.setattr("shutil.which", lambda b: f"/fake/bin/{b}" if b == "claude" else None)
+    import memhall.discovery as disc
+    monkeypatch.setattr(disc, "_which", lambda b: f"/fake/bin/{b}" if b == "claude" else "")
+    monkeypatch.setattr(disc, "CACHE_PATH", tmp_path / "cache.json")
     monkeypatch.setattr(
         "memhall.discovery.Path.exists", lambda self: "codex" in str(self))
     monkeypatch.setattr("subprocess.run", lambda *a, **k: type(

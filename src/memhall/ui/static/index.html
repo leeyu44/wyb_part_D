@@ -423,7 +423,16 @@ const envRow=(c)=>`
     <span class="pill ${c.ok?"ok":"warn"}">${c.ok?"通过":"未就绪"}</span>
     <span class="d">${esc(c.detail||"")}</span></div>`;
 function secPending(){return '<div class="empty"><span class="spin"></span> 探测中…</div>';}
-async function loadDoctor(){
+function renderFoundList(box,found){
+  box.innerHTML=found.map(cardRow).join("");
+  staggerIn(box.querySelectorAll(".mini"),{y:12,stagger:.035});
+}
+function renderNotFoundWrap(box,missed){
+  box.innerHTML=`<details style="margin-top:8px"><summary style="cursor:pointer;
+    color:var(--faint);font-size:12.5px;user-select:none">未检出 ${missed.length} 项（点击展开名单）</summary>
+    <div style="margin-top:8px;color:var(--faint);font-size:12px;line-height:2">${missed.map(esc).join(" · ")}</div></details>`;
+}
+async function loadDoctor(fresh=false){
   const body=$("#docBody");
   doctorLoaded=true;
   body.innerHTML=`
@@ -439,17 +448,19 @@ async function loadDoctor(){
     try{results[key]=await promise;render(results[key]);}
     catch(e){render({error:e.message});}
   };
-  const pLocal=done("local",api("/api/doctor/local"),(d)=>{
+  const pLocal=done("local",api(`/api/doctor/local${fresh?"?fresh=1":""}`),(d)=>{
     const box=$("#dgLocal");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
-    box.innerHTML=d.local.map(cardRow).join("")||'<div class="empty">未检出</div>';
-    staggerIn(box.querySelectorAll(".mini"),{y:12,stagger:.04});});
+    const found=d.local.filter(f=>f.found),missed=d.local.filter(f=>!f.found);
+    renderFoundList(box,found);
+    const wrap=document.createElement("div");wrap.id="dgMissed";
+    box.parentElement.insertBefore(wrap,box.nextSibling);
+    renderNotFoundWrap(wrap,missed.map(f=>f.name));});
   const pVm=done("vm",api("/api/doctor/vm"),(d)=>{
     const box=$("#dgVm");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
     if(d.vm_error){box.innerHTML=`<div class="empty">${esc(d.vm_error)}</div>`;return}
-    box.innerHTML=d.vm.map(cardRow).join("")||'<div class="empty">未发现</div>';
-    staggerIn(box.querySelectorAll(".mini"),{y:12,stagger:.04});});
+    renderFoundList(box,d.vm);});
   const pEnv=done("env",api("/api/doctor/env"),(d)=>{
     const box=$("#dgEnv");
     if(d.error){box.innerHTML=`<div class="empty">失败：${esc(d.error)}</div>`;return}
@@ -458,13 +469,14 @@ async function loadDoctor(){
   await Promise.all([pLocal,pVm,pEnv]);
   const usable=["mock",...new Set([...(results.local?.local||[]),...(results.vm?.vm||[])]
     .filter(f=>f.found&&f.adapter).map(f=>f.adapter))];
-  $("#dgHint").innerHTML=`可用适配器 <b>${usable.join(" · ")}</b>，去评测页开跑`;
+  const nFound=(results.local?.local||[]).filter(f=>f.found).length;
+  $("#dgHint").innerHTML=`本机发现 <b>${nFound}</b> 个智能体 · 可用适配器 <b>${usable.join(" · ")}</b>　<span style="color:var(--faint);font-size:12px">版本信息缓存 12h，「重新体检」强制刷新</span>`;
   const bar=$("#dgBar");bar.style.display="flex";
   const go=$("#docGoRun");
   if(go){go.addEventListener("click",()=>switchTab("run"));}
   if(G){G.fromTo(bar,{y:10,opacity:0},{y:0,opacity:1,duration:.35,ease:"power2.out"});}
 }
-$("#docRefresh").addEventListener("click",loadDoctor);
+$("#docRefresh").addEventListener("click",()=>loadDoctor(true));
 
 /* ---------- 评测 ---------- */
 async function loadCaseDirs(){
