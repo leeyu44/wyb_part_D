@@ -398,7 +398,18 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
 <script>
 "use strict";
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const G=window.gsap||null;
+let G=window.gsap||null;
+function whenLive(cb){
+  /* rAF 活性探测：首帧到达=正常动画环境；300ms 无帧（无头截图/后台标签/
+     rAF 冻结）则熄灭 GSAP（G=null），全部 if(G) 守卫自动转静态渲染——
+     否则 from() 动画会卡在 opacity:0 初态，页面 DOM 完整却画不出来。 */
+  if(!G){cb();return}
+  let done=false;
+  const go=()=>{if(!done){done=true;cb()}};
+  if(!window.requestAnimationFrame){G=null;cb();return}
+  window.requestAnimationFrame(go);
+  setTimeout(()=>{if(!done){done=true;G=null;cb()}},300);
+}
 const CAPS={persist:"长期保持",recall:"记忆调用",dynamic_update:"动态更新",
   discriminate:"相近区分",boundary:"边界识别",reuse:"任务复用"};
 const VMETA={correct:["正确","ok"],omission:["遗漏","dim"],confusion:["混淆","warn"],
@@ -883,14 +894,16 @@ async function api(url,opts={}){
 
 /* ---------- 启动 ---------- */
 window.addEventListener("load",()=>{
-  initInk();
-  if(G){G.timeline()
-    .from(".brand",{y:-14,opacity:0,duration:.45,ease:"power2.out"})
-    .from("#nav",{y:-10,opacity:0,duration:.4,ease:"power2.out"}, "-=.2")
-    .from("#tab-doctor .card",{y:16,opacity:0,duration:.45,ease:"power2.out"}, "-=.18");
-  }
-  loadDoctor();loadCaseDirs();
-  api("/api/meta").then(d=>{$("#ftVer").textContent="服务端 v"+d.version+" · py"+d.python;}).catch(()=>{});
+  whenLive(()=>{
+    initInk();
+    if(G){G.timeline()
+      .from(".brand",{y:-14,opacity:0,duration:.45,ease:"power2.out"})
+      .from("#nav",{y:-10,opacity:0,duration:.4,ease:"power2.out"}, "-=.2")
+      .from("#tab-doctor .card",{y:16,opacity:0,duration:.45,ease:"power2.out"}, "-=.18");
+    }
+    loadDoctor();loadCaseDirs();
+    api("/api/meta").then(d=>{$("#ftVer").textContent="服务端 v"+d.version+" · py"+d.python;}).catch(()=>{});
+  });
 });
 if(document.fonts&&document.fonts.ready){
   document.fonts.ready.then(()=>{initInk();});}
