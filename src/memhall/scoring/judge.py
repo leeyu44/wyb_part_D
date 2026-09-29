@@ -76,12 +76,35 @@ class ScriptedJudge:
         correct_keys = [k for k, v in probe.verdict_map.items() if v == "correct"]
         refs = ["transcript:answer"]
 
+        # 锚例匹配三层：①尾段命中——锚例值通常在"是/用/在/要/→"之后的尾段，
+        # 尾段的值与区分词整体出现才算（半对/改尾诱饵不放过）。在原文上取尾段
+        # （_norm 会把路径分隔符压掉，".md/.zd"这类区别就没了）②全串关键值全中
+        # ③重叠率 ≥0.8 兜底
         for anchor in probe.anchors:
             a_n = _norm(anchor.reply)
             if not a_n:
                 continue
-            overlap = sum(1 for tok in _tokens(a_n) if tok in _tokens(ans_n))
+            refs = ["transcript:answer"]
+            a_raw = re.sub(r"\s+", "", anchor.reply)
+            ans_raw = re.sub(r"\s+", "", answer)
+            ans_vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", ans_raw))
+            ans_bg = _bigrams(ans_raw)
+            m = list(re.finditer(r"[是在用要放→]", a_raw))
+            tail = a_raw[m[-1].end():] if m else ""
+            if tail:
+                t_bg = _bigrams(tail) - _bigrams(re.sub(r"\s+", "", probe.ask))
+                t_vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", tail))
+                if ((t_bg or t_vals)
+                        and (not t_bg or t_bg <= ans_bg)
+                        and (not t_vals or t_vals <= ans_vals)):
+                    return JudgeOutcome(anchor.expect_verdict, 0.9, refs,
+                                        f"锚例尾段命中（{tail[:20]}）")
+            vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", a_raw))
+            if vals and vals <= ans_vals:
+                return JudgeOutcome(anchor.expect_verdict, 0.9, refs,
+                                    f"锚例值命中（{', '.join(sorted(vals))}）")
             toks = _tokens(a_n)
+            overlap = sum(1 for tok in toks if tok in _tokens(ans_n))
             if toks and overlap / len(toks) >= 0.8:
                 return JudgeOutcome(anchor.expect_verdict, 0.9, refs,
                                     f"锚例命中（重叠率 {overlap}/{len(toks)}）")
@@ -121,7 +144,16 @@ def _tokens(s: str) -> set[str]:
     return out
 
 
+def _bigrams(s: str) -> set[str]:
+    """CJK 相邻二元组——锚例区分词定位用。"""
+    cs = re.findall(r"[一-鿿]", s)
+    return {a + b for a, b in zip(cs, cs[1:])}
+
+
 # ---------- 双 LLM judge（移植自 okim-bench，适配 verdict_map）----------
+
+# 判卷提示词版本——进 manifest，排除"判卷口径漂了"的质疑（design.md §10）
+JUDGE_PROMPT_VERSION = "2026-09-29"
 
 JUDGE_PROMPT = """你是记忆评测评委。根据探测项契约与被测智能体的回答，从给定类别中选出判定。
 

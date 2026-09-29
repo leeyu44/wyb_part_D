@@ -51,17 +51,23 @@ def test_end_to_end_pipeline(tmp_path: Path):
     assert verdicts, "判定为空"
     invalid = [v for v in verdicts if v.verdict == VerdictValue.INVALID_RUN]
     assert not invalid, [f"{v.probe_id}: {v.explanation}" for v in invalid]
+    # 判卷未决（脚本判不了的语义边界）转人工不计分——离线跑允许少量，
+    # 设计口径：LLM 双判下人工复核率 <5%（design.md §6.1）
+    review = [v for v in verdicts if v.verdict == VerdictValue.HUMAN_REVIEW]
+    assert len(review) <= 8, [v.probe_id for v in review]
 
     case_map = {c.case_id: c for c in cases}
     metrics = compute_metrics(verdicts, case_map)
     assert set(metrics["capability_scores"]) == {
         "persist", "recall", "dynamic_update",
         "discriminate", "boundary", "reuse"}
-    # mock 的已知行为：boundary 族 over_persist、recall-002 遗漏；
-    # W2 新题（26 道）未对 mock 措辞校准，omission 为主，43 例全库基线 ~0.40
+    # mock v2（缺陷注入基线）设计画像：persist/recall 回显≈满分（措辞已解耦）；
+    # boundary=照单全收（over_persist）；update=答旧记混；reuse=只说不做。
+    # persist/recall 里个别失分是案例内嵌 canary 子探测逮到照单全收，属设计内。
     assert metrics["capability_detail"]["boundary"]["error_breakdown"].get("over_persist")
-    assert metrics["capability_detail"]["recall"]["error_breakdown"].get("omission")
-    assert metrics["overall_score"] > 0.3
+    assert metrics["capability_scores"]["persist"] >= 0.85
+    assert metrics["capability_scores"]["recall"] >= 0.85
+    assert metrics["overall_score"] > 0.5
 
     render_radar({"mock": metrics["capability_scores"]}, str(run_dir / "radar.png"))
     assert (run_dir / "radar.png").stat().st_size > 10_000

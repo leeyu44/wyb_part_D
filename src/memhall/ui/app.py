@@ -230,6 +230,12 @@ def create_app() -> FastAPI:
                 elif adapter_name == "hermes-local":
                     from memhall.adapters.hermes_local import LocalHermesAdapter
                     adapters["hermes-local"] = LocalHermesAdapter
+                elif adapter_name == "claude-local":
+                    from memhall.adapters.claude_local import LocalClaudeAdapter
+                    adapters["claude-local"] = LocalClaudeAdapter
+                elif adapter_name == "qwen-local":
+                    from memhall.adapters.qwen_local import LocalQwenAdapter
+                    adapters["qwen-local"] = LocalQwenAdapter
                 elif adapter_name == "opencode":
                     from memhall.adapters.opencode import OpenCodeAdapter
                     adapters["opencode"] = OpenCodeAdapter
@@ -263,12 +269,17 @@ def create_app() -> FastAPI:
                 manifest = json.loads(
                     (run_dir / "manifest.json").read_text(encoding="utf-8"))
                 metrics = _finish_run(run_dir, run_id, manifest, verdicts,
-                                      {c.case_id: c for c in cases})
+                                      {c.case_id: c for c in cases},
+                                      judge_mode=judge_mode)
                 emit({"type": "done", "run_id": run_id,
                       "score": metrics["overall_score"],
                       "n_valid": metrics["n_valid"],
                       "n_total": metrics["n_probes_total"],
                       "caps": metrics["capability_scores"]})
+                from memhall.notify import notify_run_done
+                notify_run_done(adapter_name, metrics["overall_score"],
+                                metrics["n_valid"], metrics["n_probes_total"],
+                                str(run_dir), radar=str(run_dir / "radar.png"))
             except _RunAborted:
                 emit({"type": "stopped",
                       "msg": "已中止（当前用例完成处停下，证据已落盘）"})

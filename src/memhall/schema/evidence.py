@@ -35,6 +35,7 @@ class VerdictValue(str, Enum):
     OVER_PERSIST = "over_persist"    # 不该记的记下了
     WRONG_REUSE = "wrong_reuse"      # 用错了
     INVALID_RUN = "invalid_run"      # 运行无效（不计分，单列）
+    HUMAN_REVIEW = "human_review"    # 判卷未决（脚本判不了且无 LLM judge，转人工；不计分）
 
 
 class DecidedBy(str, Enum):

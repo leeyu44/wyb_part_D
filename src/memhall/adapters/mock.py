@@ -1,20 +1,28 @@
-"""MockAdapter —— 假智能体，全队第一个能跑的适配器（A 出的样板代码）。
+"""MockAdapter —— 缺陷注入基线（v2，2026-09-29 重构）。
 
-作用：
-1. M1 冒烟（09.27）的"被测智能体"——不依赖任何真机/VM/网络，runner 全链路可跑；
-2. 后续真适配器（KylinBot/Hermes）的写法参照——照这个类的样子实现五个方法即可；
-3. 单元测试固定靶子——行为确定，两次 reset→send→dump 哈希一致（契约 01 §5 稳定性）。
+三个角色不变：M1 冒烟被测体 / 适配器写法样板 / 单元测试固定靶子。
 
-行为设计（故意做成"有点记性但记不完美"，让 M1 冒烟能看到五种判定都出现）：
-- "记住 X" 的话术 -> 存入记忆（keyword 提取，模拟写入）；
-- "改到/换成 Y" 的话术 -> 覆盖旧值（模拟更新）；
-- 一次性/临时/canary 串 -> 故意还是存（模拟"不该记的记下了"，over_persist 样本）；
-- 问"我的 X 在哪" -> 从记忆查并回答（模拟检索）；查不到 -> "我不知道"（模拟忘了）。
+v2 与 v1 的本质差别（回应"措辞耦合"批评）：
+- v1 靠正则双侧配对（教"我的X是Y"提 key，问"我的X在哪"查 key）——出题措辞
+  稍偏就连不上，mock 分数混入了"出题人↔mock 措辞对齐度"，不是纯净基线；
+- v2 作答**回显教学原句**：题库的 expect 都是教学内容的子串，原句进原句出，
+  判卷子串必然命中——分数与措辞解耦，只剩设计好的缺陷模式。
+
+设计缺陷模式（六维口径，分数是这些模式的确定输出，不是难度地板）：
+- persist / recall   ：记住并回显（无缺陷注入，应≈满分）；
+- dynamic_update     ：粘连旧值——改口后新旧并存，作答仍取最早一条 → 记混；
+- discriminate       ：歧义取早——相近记忆竞争时取重叠最多/最早 → 记混；
+- boundary           ：照单全收——明说别记的也存也答 → 过度持久化；
+- reuse              ：只说不做——不执行任务，文件系统断言必失败。
+
+回答选择策略：与问题共享"特征 token"（CJK 二元组 / ≥2 位字母数字串）的记忆里，
+取重叠数最多者，同分取最早——这一条同时产出更新/区分两个维度的设计缺陷。
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from memhall.adapters.base import AgentAdapter
@@ -29,15 +37,49 @@ from memhall.schema.evidence import (
 
 utc = lambda: datetime.now(timezone.utc)  # noqa: E731
 
+# 设计缺陷模式表（机器可读；报告脚注/校准对账用）
+DESIGNED_PROFILE = {
+    "persist": "回显式记忆，应≈满分（个别失分=案例内嵌 canary 逮到照单全收）",
+    "recall": "回显式记忆，应≈满分（同上）",
+    "dynamic_update": "粘连旧值：改口后答旧 → 记混；规则探测因双值并存而通过",
+    "discriminate": "首因粘连：相近记忆竞争时取最早 → 部分记混",
+    "boundary": "照单全收：明说别记的也存也答 → 过度持久化",
+    "reuse": "只说不做：不执行任务，文件系统断言失败",
+}
+
+_STOP = {
+    "我的", "你的", "他的", "这个", "那个", "就是", "现在", "目前", "一下",
+    "帮我", "帮忙", "记了", "记住", "记得", "知道", "告诉", "说过", "好的",
+    "谢谢", "什么", "哪个", "哪条", "多少", "在哪", "怎么", "是谁", "用哪个",
+    "是不是", "还是", "以前", "上次", "最近", "问题", "事情",
+}
+_QMARK = re.compile(r"[？?]$|吗[？?]?$")
+_ALNUM = re.compile(r"[A-Za-z0-9_~/.\-]{2,}")
+_CJK = re.compile(r"[一-鿿]")
+
+
+def _tokens(text: str) -> set[str]:
+    """特征 token：≥2 位字母数字串 + CJK 相邻二元组（停用词剔除）。"""
+    out = {t for t in _ALNUM.findall(text) if not t.isdigit()}
+    chars = _CJK.findall(text)
+    out |= {a + b for a, b in zip(chars, chars[1:])}
+    return out - _STOP
+
+
+@dataclass
+class _Fact:
+    raw: str                     # 教学原句（作答回显用，expect ⊆ raw → 判卷必中）
+    toks: set[str] = field(default_factory=set)
+    seq: int = 0
+
 
 class MockAdapter(AgentAdapter):
-    """假智能体：一个内存 dict 当记忆库，回固定话术。"""
+    """假智能体：回显式记忆 + 设计缺陷模式，行为完全确定。"""
 
     name = "mock"
 
     def __init__(self) -> None:
-        self._memory: dict[str, str] = {}        # key -> value（模拟记忆库）
-        self._created_at: dict[str, datetime] = {}
+        self._facts: list[_Fact] = []
         self._actions: list[Action] = []
         self._action_seq = 0
         self._reply_seq = 0
@@ -45,8 +87,7 @@ class MockAdapter(AgentAdapter):
     # ---- 契约 01 五方法 ----
 
     def reset(self) -> None:
-        self._memory.clear()
-        self._created_at.clear()
+        self._facts.clear()
         self._actions.clear()
         self._action_seq = 0
         self._reply_seq = 0
@@ -56,98 +97,48 @@ class MockAdapter(AgentAdapter):
         text = self._respond(message)
         reply_at = utc()
         self._reply_seq += 1
-        return Reply(
-            session_id=session_id,
-            text=text,
-            sent_at=sent_at,
-            reply_at=reply_at,
-            latency_ms=int((reply_at - sent_at).total_seconds() * 1000) + 1,
-            token_usage=None,
-        )
+        return Reply(session_id=session_id, text=text,
+                     sent_at=sent_at, reply_at=reply_at,
+                     latency_ms=int((reply_at - sent_at).total_seconds() * 1000) + 1,
+                     token_usage=None)
 
     def end_session(self, session_id: str) -> None:
         pass  # mock 无进程无窗口，会话隔离靠 runner 换 session_id
 
     def dump_memory(self) -> MemorySnapshot:
         entries = [
-            MemoryEntry(
-                entry_id=f"m-{i:03d}",
-                content=f"{k}={v}",
-                created_at=self._created_at.get(k),
-                source_turn=None,
-            )
-            for i, (k, v) in enumerate(sorted(self._memory.items()))
+            MemoryEntry(entry_id=f"m-{i:03d}", content=f.raw,
+                        created_at=None, source_turn=None)
+            for i, f in enumerate(self._facts)
         ]
-        return MemorySnapshot(
-            format="json",
-            dumped_at=utc(),
-            entries=entries,
-            raw=None,   # mock 不落原始文件；真适配器直读 sqlite/文件后填 raw
-        )
+        return MemorySnapshot(format="json", dumped_at=utc(),
+                              entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:
         return ActionDump(actions=list(self._actions), coverage="full")
 
-    # ---- 假智能体的"脑子"（测试样本工厂，不用真 LLM）----
+    # ---- 假智能体的"脑子"：存一切陈述，答最重叠最早 ----
 
     def _respond(self, message: str) -> str:
         msg = message.strip()
-        # 疑问句不写入：问句里的"是什么/用哪个"不是陈述，检索优先
-        is_question = msg.endswith("？") or msg.endswith("?")
-
-        # 写入："我的代码目录是 ~/dev/src" / "记一下：编辑器用 vim"
-        if not is_question:
-            m = re.match(r"(?:我的|我的)?(.+?)(?:是|放在|用)\s*([~/\w.-]+)", msg)
-            if m and not msg.endswith("?"):
-                key, value = m.group(1).strip(), m.group(2).strip()
-                if "临时" in msg or "一次性" in msg or re.search(r"canary-\w+", msg):
-                    # 模拟边界失效：明说了不该记，还是存了（over_persist 样本）
-                    self._remember(key, value)
-                    return f"好的。"
-                self._remember(key, value)
-                return f"好的，我记住了：{key} = {value}。"
-
-        # 更新："改到 ~/dev 了" / "以后以这个为准"（句中改口也算）
-        m = re.search(r"(?:改到|换成|改为)\s*([~/\w.-]+)", msg)
-        if m:
-            new_value = m.group(1).strip()
-            if self._memory:
-                key = next(iter(self._memory))   # 简化：更新最近一个 key
-                self._remember(key, new_value)
-                return f"好的，已更新：{key} = {new_value}。"
-            return "好的。"
-
-        # 检索："我的 X 在哪" / "我用什么编辑器" / "你记的我的 X 是哪个" / "按你记的…用哪个"
-        m = re.match(r"(?:按你记的，?|你记的|你之前记的)?我的?(.+?)(?:现在|目前)?"
-                     r"(?:在哪|放在哪|是什么|是啥|是哪个|是多少|用哪个)", msg)
-        if m:
-            key = m.group(1).strip()
-            if key in self._memory:
-                return f"{key}是 {self._memory[key]}。"
-            return "这个我不记得了。"   # 模拟忘了
-
-        if "记住了吗" in msg or "还记得" in msg:
-            if self._memory:
-                items = "、".join(f"{k}={v}" for k, v in self._memory.items())
-                return f"记得，目前有：{items}。"
-            return "我们还没聊过什么需要记的。"
-
-        # 问句但检索未命中：模拟"问了不知道"（拒答而非答非所问）
-        if is_question:
+        if _QMARK.search(msg):
+            hits = self._match(_tokens(msg))
+            if hits:
+                return f"我记的你说过：{hits[0].raw}。"
             return "这个我不记得了。"
-        return "好的。"
+        # 陈述/指令一律入记忆（boundary 缺陷：照单全收，别记的也存）
+        fact = _Fact(raw=msg, toks=_tokens(msg), seq=len(self._facts))
+        if not any(f.raw == msg for f in self._facts):
+            self._facts.append(fact)
+            self._action_seq += 1
+            self._actions.append(
+                Action(action_id=f"a-{self._action_seq:03d}", ts=utc(),
+                       tool="memory.write", args={"raw": msg}, result="ok",
+                       source=ActionSource.AGENT_LOG))
+        return f"好的，我记住了：{msg}。"
 
-    def _remember(self, key: str, value: str) -> None:
-        self._memory[key] = value
-        self._created_at[key] = utc()
-        self._action_seq += 1
-        self._actions.append(
-            Action(
-                action_id=f"a-{self._action_seq:03d}",
-                ts=utc(),
-                tool="memory.write",
-                args={"key": key, "value": value},
-                result="ok",
-                source=ActionSource.AGENT_LOG,
-            )
-        )
+    def _match(self, q_toks: set[str]) -> list[_Fact]:
+        """命中的记忆按"首因粘连"排序：最早教的那条最先被想起——
+        这一个缺陷同时产出 update（答旧值）与 discriminate（相近取早）的记混。"""
+        hits = [f for f in self._facts if q_toks & f.toks]
+        return sorted(hits, key=lambda f: f.seq)

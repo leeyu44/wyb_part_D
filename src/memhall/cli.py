@@ -32,7 +32,17 @@ def load_cases(case_dir: Path) -> list[MemoryCase]:
 
 
 def _finish_run(run_dir: Path, run_id: str, manifest: dict,
-                verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> dict:
+                verdicts: list[Verdict], cases: dict[str, MemoryCase],
+                judge_mode: str = "scripted") -> dict:
+    from memhall.scoring.judge import JUDGE_PROMPT_VERSION
+    manifest["judge"] = {  # 依赖锁定：判卷口径可追溯（design.md §10）
+        "mode": judge_mode,
+        "model_a": os.environ.get("JUDGE_A_MODEL", ""),
+        "model_b": os.environ.get("JUDGE_B_MODEL", ""),
+        "prompt_version": JUDGE_PROMPT_VERSION,
+    }
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     metrics = compute_metrics(verdicts, cases)
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -63,6 +73,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.adapter == "hermes-local":
         from memhall.adapters.hermes_local import LocalHermesAdapter
         adapters["hermes-local"] = LocalHermesAdapter
+    elif args.adapter == "claude-local":
+        from memhall.adapters.claude_local import LocalClaudeAdapter
+        adapters["claude-local"] = LocalClaudeAdapter
+    elif args.adapter == "qwen-local":
+        from memhall.adapters.qwen_local import LocalQwenAdapter
+        adapters["qwen-local"] = LocalQwenAdapter
     elif args.adapter == "opencode":
         from memhall.adapters.opencode import OpenCodeAdapter
         adapters["opencode"] = OpenCodeAdapter
@@ -82,7 +98,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     verdicts = []
     for case, store in zip(cases, stores):
         verdicts.extend(evaluate_case(case, store, run_id, judges))
-    metrics = _finish_run(run_dir, run_id, manifest, verdicts, {c.case_id: c for c in cases})
+    metrics = _finish_run(run_dir, run_id, manifest, verdicts,
+                          {c.case_id: c for c in cases}, judge_mode=args.judge)
 
     print(f"run_id: {run_id}")
     print(f"总体正确率: {metrics['overall_score']:.1%}"
@@ -91,6 +108,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     for cap, score in metrics["capability_scores"].items():
         print(f"  {cap:<14} {score:.0%}")
     print(f"产物: {run_dir}")
+    from memhall.notify import notify_run_done
+    notify_run_done(args.adapter, metrics["overall_score"],
+                    metrics["n_valid"], metrics["n_probes_total"],
+                    str(run_dir), radar=str(run_dir / "radar.png"))
     return 0
 
 
@@ -112,6 +133,27 @@ def _load_verdicts(run_dir: Path, manifest: dict,
                                for line in ev_path.read_text(encoding="utf-8").splitlines()])
         verdicts.extend(evaluate_case(case, store, manifest["run_id"], judges))
     return verdicts
+
+
+def _resolve_run(p: str) -> Path:
+    d = Path(p)
+    if d.exists():
+        return d
+    alt = Path("runs") / p
+    if alt.exists():
+        return alt
+    raise SystemExit(f"找不到运行目录: {p}（可用: runs/<run_id>，或完整路径）")
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    from memhall.report import compare_runs
+    out = compare_runs(_resolve_run(args.run_a), _resolve_run(args.run_b),
+                       Path(args.out))
+    print(f"{out['label_a']} vs {out['label_b']}")
+    print(f"总体: {out['overall_a']:.1%} → {out['overall_b']:.1%}"
+          f"　共同探测点 {out['n_common']}　判定翻转 {out['n_flips']}")
+    print(f"产物: {out['radar']}  {out['report']}")
+    return 0
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -181,6 +223,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     rep = run_doctor(scan_remote=not args.no_vm)
     print(render_doctor(rep))
     return 0 if rep.usable_adapters() else 1
+
+
+def cmd_systest(args: argparse.Namespace) -> int:
+    try:
+        from memhall.systests import run_systest
+    except ImportError:
+        print("系统级测试需要 paramiko（uv run / pip 安装），exe 单文件版不含", file=sys.stderr)
+        return 2
+    print("系统级测试将重启虚拟机并短暂断网（自动恢复），开始…")
+    rep = run_systest(args.adapter, Path(args.out))
+    for x in rep["results"]:
+        print(f"  {'✅' if x.passed else '❌'} {x.zh}: {x.detail}")
+    print(f"产物: {rep['run_dir']}")
+    from memhall.notify import notify_run_done
+    notify_run_done(f"systest-{args.adapter}",
+                    rep["n_pass"] / rep["n_total"], rep["n_pass"], rep["n_total"],
+                    rep["run_dir"], radar=f"{rep['run_dir']}/systest.png")
+    return 0 if rep["n_pass"] == rep["n_total"] else 1
 
 
 def cmd_ui(args: argparse.Namespace) -> int:
@@ -277,6 +337,17 @@ def main() -> None:
     p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
                        help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
+
+    p_cmp = sub.add_parser("compare", help="对比两次运行：对比雷达 + 判定翻转明细")
+    p_cmp.add_argument("run_a", help="运行 A（runs/<run_id> 或完整路径）")
+    p_cmp.add_argument("run_b", help="运行 B")
+    p_cmp.add_argument("-o", "--out", default="runs/_compare", help="输出目录")
+    p_cmp.set_defaults(func=cmd_compare)
+
+    p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）")
+    p_sys.add_argument("-a", "--adapter", default="hermes", help="VM 内适配器")
+    p_sys.add_argument("-o", "--out", default="runs", help="输出根目录")
+    p_sys.set_defaults(func=cmd_systest)
 
     p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
