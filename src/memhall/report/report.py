@@ -13,6 +13,7 @@ VERDICT_ZH = {
     "correct": "✅ 正确", "omission": "遗漏", "confusion": "混淆",
     "fabrication": "记错(编造)", "over_persist": "错误持久化",
     "wrong_reuse": "错误复用", "invalid_run": "⚠️ 运行无效",
+    "human_review": "⏳ 判卷未决(转人工)",
 }
 
 
@@ -65,4 +66,12 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
     lines.append(f"> 证据下钻：`runs/{run_id}/cases/<case_id>/evidence.jsonl`"
                  f"（每条判定引用对应证据哈希）")
     lines.append("")
+    if manifest.get("adapter") == "mock":
+        from memhall.adapters.mock import DESIGNED_PROFILE
+        lines.append("---")
+        lines.append("**mock 为缺陷注入基线**：分数是下列设计模式的确定输出，"
+                     "用作管线回归与判卷自检，不是难度地板。")
+        for cap, mode in DESIGNED_PROFILE.items():
+            lines.append(f"- {cap}: {mode}")
+        lines.append("")
     return "\n".join(lines)

@@ -93,7 +93,9 @@ def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: in
         meta = None
 
     if outcome.key is None:
-        value, confidence = VerdictValue.INVALID_RUN, 0.0
+        # 判卷未决（≠运行无效）：脚本判不了且无 LLM judge 可用——转人工，不计分
+        value, confidence = VerdictValue.HUMAN_REVIEW, 0.0
+        decided_by = DecidedBy.HUMAN_REVIEW
     else:
         value = VerdictValue(probe.verdict_map.get(outcome.key, "invalid_run"))
         confidence = outcome.confidence

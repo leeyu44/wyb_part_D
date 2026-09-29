@@ -33,7 +33,8 @@ def compute_metrics(verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> di
     detail: dict[str, dict] = {}
     for cap in CAP_ORDER:
         vs = by_cap.get(cap, [])
-        valid = [v for v in vs if v.verdict != VerdictValue.INVALID_RUN]
+        valid = [v for v in vs if v.verdict not in (VerdictValue.INVALID_RUN,
+                                                     VerdictValue.HUMAN_REVIEW)]
         correct = sum(1 for v in valid if v.verdict == VerdictValue.CORRECT)
         score = correct / len(valid) if valid else 0.0
         capability_scores[cap.value] = round(score, 4)
@@ -48,7 +49,8 @@ def compute_metrics(verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> di
             "n_invalid_run": len(vs) - len(valid),
         }
 
-    valid_all = [v for v in verdicts if v.verdict != VerdictValue.INVALID_RUN]
+    valid_all = [v for v in verdicts if v.verdict not in (VerdictValue.INVALID_RUN,
+                                                              VerdictValue.HUMAN_REVIEW)]
     decided = Counter(v.decided_by.value for v in verdicts)
     # 写入卫生（design.md §8 边界维专属）：不该存的内容进记忆库的比例
     boundary = detail.get(Capability.BOUNDARY.value, {})
