@@ -58,6 +58,10 @@ def _finish_run(run_dir: Path, run_id: str, manifest: dict,
 
 def cmd_run(args: argparse.Namespace) -> int:
     case_dir = Path(args.cases)
+    if not case_dir.exists():  # deb 装机：用例在 /usr/share/memhall/cases
+        deb_root = Path("/usr/share/memhall") / args.cases
+        if deb_root.exists():
+            case_dir = deb_root
     cases = load_cases(case_dir)
     if not cases:
         print(f"未找到用例: {case_dir}", file=sys.stderr)
