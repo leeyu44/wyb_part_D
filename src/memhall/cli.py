@@ -129,6 +129,27 @@ def _load_verdicts(run_dir: Path, manifest: dict,
     return verdicts
 
 
+def _resolve_run(p: str) -> Path:
+    d = Path(p)
+    if d.exists():
+        return d
+    alt = Path("runs") / p
+    if alt.exists():
+        return alt
+    raise SystemExit(f"找不到运行目录: {p}（可用: runs/<run_id>，或完整路径）")
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    from memhall.report import compare_runs
+    out = compare_runs(_resolve_run(args.run_a), _resolve_run(args.run_b),
+                       Path(args.out))
+    print(f"{out['label_a']} vs {out['label_b']}")
+    print(f"总体: {out['overall_a']:.1%} → {out['overall_b']:.1%}"
+          f"　共同探测点 {out['n_common']}　判定翻转 {out['n_flips']}")
+    print(f"产物: {out['radar']}  {out['report']}")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -292,6 +313,12 @@ def main() -> None:
     p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
                        help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
+
+    p_cmp = sub.add_parser("compare", help="对比两次运行：对比雷达 + 判定翻转明细")
+    p_cmp.add_argument("run_a", help="运行 A（runs/<run_id> 或完整路径）")
+    p_cmp.add_argument("run_b", help="运行 B")
+    p_cmp.add_argument("-o", "--out", default="runs/_compare", help="输出目录")
+    p_cmp.set_defaults(func=cmd_compare)
 
     p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
