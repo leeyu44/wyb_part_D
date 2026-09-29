@@ -230,6 +230,12 @@ def create_app() -> FastAPI:
                 elif adapter_name == "hermes-local":
                     from memhall.adapters.hermes_local import LocalHermesAdapter
                     adapters["hermes-local"] = LocalHermesAdapter
+                elif adapter_name == "claude-local":
+                    from memhall.adapters.claude_local import LocalClaudeAdapter
+                    adapters["claude-local"] = LocalClaudeAdapter
+                elif adapter_name == "qwen-local":
+                    from memhall.adapters.qwen_local import LocalQwenAdapter
+                    adapters["qwen-local"] = LocalQwenAdapter
                 elif adapter_name == "opencode":
                     from memhall.adapters.opencode import OpenCodeAdapter
                     adapters["opencode"] = OpenCodeAdapter

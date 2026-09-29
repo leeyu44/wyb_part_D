@@ -73,6 +73,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.adapter == "hermes-local":
         from memhall.adapters.hermes_local import LocalHermesAdapter
         adapters["hermes-local"] = LocalHermesAdapter
+    elif args.adapter == "claude-local":
+        from memhall.adapters.claude_local import LocalClaudeAdapter
+        adapters["claude-local"] = LocalClaudeAdapter
+    elif args.adapter == "qwen-local":
+        from memhall.adapters.qwen_local import LocalQwenAdapter
+        adapters["qwen-local"] = LocalQwenAdapter
     elif args.adapter == "opencode":
         from memhall.adapters.opencode import OpenCodeAdapter
         adapters["opencode"] = OpenCodeAdapter
@@ -219,6 +225,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if rep.usable_adapters() else 1
 
 
+def cmd_systest(args: argparse.Namespace) -> int:
+    try:
+        from memhall.systests import run_systest
+    except ImportError:
+        print("系统级测试需要 paramiko（uv run / pip 安装），exe 单文件版不含", file=sys.stderr)
+        return 2
+    print("系统级测试将重启虚拟机并短暂断网（自动恢复），开始…")
+    rep = run_systest(args.adapter, Path(args.out))
+    for x in rep["results"]:
+        print(f"  {'✅' if x.passed else '❌'} {x.zh}: {x.detail}")
+    print(f"产物: {rep['run_dir']}")
+    from memhall.notify import notify_run_done
+    notify_run_done(f"systest-{args.adapter}",
+                    rep["n_pass"] / rep["n_total"], rep["n_pass"], rep["n_total"],
+                    rep["run_dir"], radar=f"{rep['run_dir']}/systest.png")
+    return 0 if rep["n_pass"] == rep["n_total"] else 1
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
     from memhall.ui.app import create_app
     app = create_app()
@@ -319,6 +343,11 @@ def main() -> None:
     p_cmp.add_argument("run_b", help="运行 B")
     p_cmp.add_argument("-o", "--out", default="runs/_compare", help="输出目录")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）")
+    p_sys.add_argument("-a", "--adapter", default="hermes", help="VM 内适配器")
+    p_sys.add_argument("-o", "--out", default="runs", help="输出根目录")
+    p_sys.set_defaults(func=cmd_systest)
 
     p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
