@@ -41,9 +41,9 @@ def test_compare_runs(tmp_path: Path):
 
     cases = load_cases(REPO / "cases/quick")
     case_map = {c.case_id: c for c in cases}
-    out = tmp_path / "runs"
     made = []
-    for _ in range(2):
+    for i in range(2):  # 各自独立目录：快机上同秒 run_id 相同会互相覆盖
+        out = tmp_path / f"runs{i}"
         adapter = MockAdapter()
         run_id, stores = run_suite(adapter, cases, out, "mock")
         manifest = json.loads((out / run_id / "manifest.json").read_text(encoding="utf-8"))
