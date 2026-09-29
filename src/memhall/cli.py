@@ -32,7 +32,17 @@ def load_cases(case_dir: Path) -> list[MemoryCase]:
 
 
 def _finish_run(run_dir: Path, run_id: str, manifest: dict,
-                verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> dict:
+                verdicts: list[Verdict], cases: dict[str, MemoryCase],
+                judge_mode: str = "scripted") -> dict:
+    from memhall.scoring.judge import JUDGE_PROMPT_VERSION
+    manifest["judge"] = {  # 依赖锁定：判卷口径可追溯（design.md §10）
+        "mode": judge_mode,
+        "model_a": os.environ.get("JUDGE_A_MODEL", ""),
+        "model_b": os.environ.get("JUDGE_B_MODEL", ""),
+        "prompt_version": JUDGE_PROMPT_VERSION,
+    }
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     metrics = compute_metrics(verdicts, cases)
     (run_dir / "metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -82,7 +92,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     verdicts = []
     for case, store in zip(cases, stores):
         verdicts.extend(evaluate_case(case, store, run_id, judges))
-    metrics = _finish_run(run_dir, run_id, manifest, verdicts, {c.case_id: c for c in cases})
+    metrics = _finish_run(run_dir, run_id, manifest, verdicts,
+                          {c.case_id: c for c in cases}, judge_mode=args.judge)
 
     print(f"run_id: {run_id}")
     print(f"总体正确率: {metrics['overall_score']:.1%}"
@@ -91,6 +102,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     for cap, score in metrics["capability_scores"].items():
         print(f"  {cap:<14} {score:.0%}")
     print(f"产物: {run_dir}")
+    from memhall.notify import notify_run_done
+    notify_run_done(args.adapter, metrics["overall_score"],
+                    metrics["n_valid"], metrics["n_probes_total"],
+                    str(run_dir), radar=str(run_dir / "radar.png"))
     return 0
 
 

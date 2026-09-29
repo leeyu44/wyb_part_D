@@ -123,6 +123,9 @@ def _tokens(s: str) -> set[str]:
 
 # ---------- 双 LLM judge（移植自 okim-bench，适配 verdict_map）----------
 
+# 判卷提示词版本——进 manifest，排除"判卷口径漂了"的质疑（design.md §10）
+JUDGE_PROMPT_VERSION = "2026-09-28"
+
 JUDGE_PROMPT = """你是记忆评测评委。根据探测项契约与被测智能体的回答，从给定类别中选出判定。
 
 规则：

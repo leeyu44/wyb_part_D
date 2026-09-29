@@ -28,6 +28,14 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
     lines.append(f"- 总体正确率：**{metrics['overall_score']:.1%}**"
                  f"（有效 {metrics['n_valid']}/{metrics['n_probes_total']}，"
                  f"规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
+    wh = metrics.get("write_hygiene")
+    if wh is not None:
+        lines.append(f"- 写入卫生（不该记的记了）：{wh:.1%}")
+    jm = manifest.get("judge", {})
+    if jm:
+        model = f"（{jm.get('model_a', '')}）" if jm.get("model_a") else ""
+        lines.append(f"- 判卷口径：{jm.get('mode', '?')}{model}"
+                     f" · 提示词版本 {jm.get('prompt_version', '?')}")
     lines.append("")
     lines.append("![六维雷达图](radar.png)")
     lines.append("")

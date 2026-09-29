@@ -50,6 +50,11 @@ def compute_metrics(verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> di
 
     valid_all = [v for v in verdicts if v.verdict != VerdictValue.INVALID_RUN]
     decided = Counter(v.decided_by.value for v in verdicts)
+    # 写入卫生（design.md §8 边界维专属）：不该存的内容进记忆库的比例
+    boundary = detail.get(Capability.BOUNDARY.value, {})
+    bn = boundary.get("n_valid", 0)
+    write_hygiene = (round(boundary.get("error_breakdown", {})
+                           .get("over_persist", 0) / bn, 4)) if bn else None
     return {
         "n_probes_total": len(verdicts),
         "n_valid": len(valid_all),
@@ -61,4 +66,5 @@ def compute_metrics(verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> di
         "decided_by": dict(decided),
         "rule_scoring_rate": round(
             decided.get("rule", 0) / len(verdicts), 4) if verdicts else 0.0,
+        "write_hygiene": write_hygiene,
     }

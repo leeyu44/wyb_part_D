@@ -263,12 +263,17 @@ def create_app() -> FastAPI:
                 manifest = json.loads(
                     (run_dir / "manifest.json").read_text(encoding="utf-8"))
                 metrics = _finish_run(run_dir, run_id, manifest, verdicts,
-                                      {c.case_id: c for c in cases})
+                                      {c.case_id: c for c in cases},
+                                      judge_mode=judge_mode)
                 emit({"type": "done", "run_id": run_id,
                       "score": metrics["overall_score"],
                       "n_valid": metrics["n_valid"],
                       "n_total": metrics["n_probes_total"],
                       "caps": metrics["capability_scores"]})
+                from memhall.notify import notify_run_done
+                notify_run_done(adapter_name, metrics["overall_score"],
+                                metrics["n_valid"], metrics["n_probes_total"],
+                                str(run_dir), radar=str(run_dir / "radar.png"))
             except _RunAborted:
                 emit({"type": "stopped",
                       "msg": "已中止（当前用例完成处停下，证据已落盘）"})
