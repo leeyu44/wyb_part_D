@@ -1,0 +1,100 @@
+# 任务链 4：六会话长弧（对齐主流长程评测的会话深度）——约定→改约→干扰→任务→隔会话考→追加
+# 每个会话一个独立目标；目录约定跨会话更新两次，考"以最新约定行动"；
+# 诱饵目录（同事项目）在干扰段埋入；证据 = judge 锚例 + 文件树双重
+case_id: chain-004
+schema_version: "0.1"
+capability: reuse
+question_type: task_chain
+content_type: project_state
+difficulty: 3
+tags: [task-chain, long-arc, fs-evidence, seed]
+
+meta:
+  author: A
+  created: 2026-10-02
+  source: seed
+  generator: null
+  notes: "六会话长弧：偏好/约定注入→目录改约→干扰+诱饵→骨架任务→隔会话考目录→追加 tests；fs 断言验新目录复用与偏好复用（README 进 docs）"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我在写个 UKUI 桌面小组件，项目叫 kywidget，产物都放 ~/dev/kw-9x7e。另外说明类文件我一律放 docs 子目录，别散在项目根上。"
+    end_session: true
+  - name: inject
+    steps:
+      - user: "目录定了新家：项目挪到 ~/dev/kw2-9x7e，以后都用这个新目录，旧的 ~/dev/kw-9x7e 别再用了。"
+    end_session: true
+  - name: confound
+    steps:
+      - user: "歇会儿聊两句。同事他们组的 kirin-tools 项目放在 ~/work/kirin，最近做得挺快的。今天食堂居然有糖醋排骨。"
+    end_session: true
+  - name: inject
+    steps:
+      - task: "把 kywidget 的骨架建起来：入口 main.py 和 README.md，目录按我之前定的来。"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "你记的我的 kywidget 项目目录现在是哪个？"
+    end_session: true
+  - name: probe
+    steps:
+      - task: "再给项目补个 tests 目录，里面放个空的 test_main.py。"
+
+probes:
+  - id: chain-004-p1
+    kind: judge
+    after: probe
+    ask: "你记的我的 kywidget 项目目录现在是哪个？"
+    expect: "~/dev/kw2-9x7e"
+    rubric: |
+      答出 ~/dev/kw2-9x7e = 以最新约定为准，正确；答旧目录 ~/dev/kw-9x7e = 未执行"以新为准"（wrong_reuse）；
+      答 ~/work/kirin = 与同事项目混淆（fabrication）；不知道/没记过 = omission。
+      判定关键：必须明确给出唯一目录才算对；并列新旧目录或反问"是哪个来着"等同未执行以新为准。
+    verdict_map:
+      reported: correct
+      wrong_reuse: wrong_reuse
+      dont_know: omission
+      made_up: fabrication
+    anchors:
+      - reply: "项目目录是 ~/dev/kw2-9x7e。"
+        expect_verdict: reported
+      - reply: "你的项目在 ~/dev/kw-9x7e。"
+        expect_verdict: wrong_reuse
+      - reply: "项目目录是 ~/work/kirin。"
+        expect_verdict: made_up
+      - reply: "这个我没记下来。"
+        expect_verdict: dont_know
+  - id: chain-004-p2
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.diff_contains
+        args: ["kw-9x7e/main.py"]
+        then: wrong_reuse
+      - assert: fs.diff_contains
+        args: ["kw2-9x7e/main.py"]
+        then: correct
+      - assert: default
+        args: []
+        then: omission
+  - id: chain-004-p3
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.diff_contains
+        args: ["kw2-9x7e/docs/README.md"]
+        then: correct
+      - assert: default
+        args: []
+        then: omission
+  - id: chain-004-p4
+    kind: rule
+    after: probe
+    check:
+      - assert: fs.diff_contains
+        args: ["kw2-9x7e/tests/test_main.py"]
+        then: correct
+      - assert: default
+        args: []
+        then: omission

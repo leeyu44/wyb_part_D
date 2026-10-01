@@ -160,6 +160,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_aggregate(args: argparse.Namespace) -> int:
+    from memhall.report.aggregate import aggregate_runs, format_table
+    result = aggregate_runs([_resolve_run(p) for p in args.runs], Path(args.out))
+    print(format_table(result))
+    print(f"产物: {Path(args.out) / 'aggregate.json'}")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -374,6 +382,11 @@ def main() -> None:
     p_cmp.add_argument("run_b", help="运行 B")
     p_cmp.add_argument("-o", "--out", default="runs/_compare", help="输出目录")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_agg = sub.add_parser("aggregate", help="N 轮重跑聚合成 mean±std（方差口径）")
+    p_agg.add_argument("runs", nargs="+", help="N 个运行（runs/<run_id> 或完整路径）")
+    p_agg.add_argument("-o", "--out", default="runs/_aggregate", help="输出目录")
+    p_agg.set_defaults(func=cmd_aggregate)
 
     p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）")
     p_sys.add_argument("-a", "--adapter", default="hermes", help="VM 内适配器")

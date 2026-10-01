@@ -34,10 +34,12 @@ memhall/
 │   ├── report/      # 报告与雷达图
 │   ├── ui/          # Web UI（FastAPI + SSE 评测直播）
 │   └── cli.py / discovery.py / notify.py / systests.py
-├── cases/           # 用例库（full 43 / gen 21 / chains 3；quick 6 为冒烟子集）
+├── cases/           # 用例库（full 43 / gen 21 / chains 4 / heldout 21※；quick 6 为冒烟子集）
 ├── scripts/         # deb/exe 打包、VM 通道、判卷自检等脚本
 └── tests/           # 端到端与适配器测试
 ```
+
+> ※ 正式口径 = **full + chains**；**heldout 为不可见防背题池**（`scripts/gen_cases.py --seed 4210 --out cases/heldout --prefix h` 评测时现场生成，题目文本不入公开仓库，seed 公布保复现）；全量跑 ≥2 轮报 mean±std（`memhall aggregate`）。
 
 ## 使用
 
@@ -114,5 +116,7 @@ Apache-2.0（见 [LICENSE](LICENSE)）
 ## 状态
 
 v0.2.1（2026-09-29）：Web UI 评测直播、`compare` 对比 CLI、系统级测试（重启/拨钟/多用户/断网，hermes 真机 4/4）、claude/qwen 本机适配器（沙箱隔离配置目录）、UKUI 桌面通知；Mock v2 缺陷注入基线（措辞解耦后总分 62%，六维显式缺陷模式表）。里程碑见 team-plan.md。
+
+2026-10-02：评测口径对齐主流基准——不可见 held-out 防背题池（seed 4210 现场生成）、N 轮方差口径（`memhall aggregate` 出六维 mean±std）、六会话长链 chain-004（对齐 LongMemEval/LoCoMo 的长程会话深度）；CI 平台矩阵（ubuntu/windows × py3.11/3.12）+ 平台分级表；deb 补 UKUI 菜单项。
 
 双智能体对比（W2，09-28）：Hermes 81.6% vs KylinBot 61.5%（39 探测点全有效），判卷质检金标准 10/10。
