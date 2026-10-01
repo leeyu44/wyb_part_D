@@ -248,15 +248,42 @@ def cmd_systest(args: argparse.Namespace) -> int:
 
 
 def cmd_ui(args: argparse.Namespace) -> int:
+    import socket
+    url = f"http://127.0.0.1:{args.port}/"
+    # 单实例：菜单重复点击时第二份进程绑不上端口会无声退出，浏览器却连回旧实例，
+    # 造成"重启了但没生效"的错觉——这里识别到已有实例就直接开浏览器走人。
+    probe = socket.socket()
+    probe.settimeout(0.5)
+    try:
+        probe.connect(("127.0.0.1", args.port))
+        alive = True
+    except OSError:
+        alive = False
+    finally:
+        probe.close()
+    if alive:
+        import json
+        import urllib.request
+        try:
+            with urllib.request.urlopen(f"{url}api/meta", timeout=2) as r:
+                ours = "version" in json.load(r)
+        except Exception:
+            ours = False
+        if ours:
+            if not args.no_open:
+                import webbrowser
+                webbrowser.open(url)
+            print(f"已有麟阁实例在 {url}，直接打开（不再重复启动）")
+            return 0
+        print(f"端口 {args.port} 被其他程序占用", file=sys.stderr)
+        return 1
     from memhall.ui.app import create_app
     app = create_app()
     if args.window:
         return _run_window(app)
     import threading
     import webbrowser
-    url = f"http://127.0.0.1:{args.port}/"
-    if not args.no_open:
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    threading.Timer(1.2, lambda: webbrowser.open(url)).start() if not args.no_open else None
     print(f"麟阁 Web UI: {url}（Ctrl+C 退出）")
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
