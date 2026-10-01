@@ -15,6 +15,7 @@ A Memory Benchmark for Agents on the openKylin Ecosystem
 | [design.md](design.md) | 总体技术设计（交付物 a 底稿） |
 | [team-plan.md](team-plan.md) | 五人分工、4 周排期、协作规约 |
 | [environment.md](environment.md) | 环境基线与搭建步骤 |
+| [okim-bench/README.md](okim-bench/README.md) | 评分子系统（C 角色，L1→L3 判卷流水线） |
 
 ## 目录结构
 
@@ -22,20 +23,19 @@ A Memory Benchmark for Agents on the openKylin Ecosystem
 memhall/
 ├── design.md / team-plan.md / environment.md   # 三份基准文档
 ├── docs/            # 方案文档（A 总稿）+ contracts/（接口契约）
-├── schema/          # case/evidence/verdict schema
-├── cases/           # 种子用例库
-├── generators/      # 用例生成器
-├── adapters/        # 智能体适配器（三档接入）
-├── runner/          # 三阶段编排 + 系统级测试
-├── evidence/        # 证据采集与存储
-├── scoring/         # 评分引擎
-├── report/          # 指标与雷达图
-├── cli/             # memhall 命令行入口
-├── packaging/       # .deb 打包配置
-└── tests/           # 端到端测试
+├── okim-bench/      # 评分子系统：L1 确定性检查 → L2 语义规则 → L3 双 LLM judge
+├── src/memhall/     # 源码包
+│   ├── adapters/    # 智能体适配器（mock/hermes/kylinbot/claude/qwen/opencode…）
+│   ├── runner/      # 三阶段编排
+│   ├── schema/      # case/evidence/verdict 数据模型
+│   ├── scoring/     # 规则判卷 + 六维指标
+│   ├── report/      # 报告与雷达图
+│   ├── ui/          # Web UI（FastAPI + SSE 评测直播）
+│   └── cli.py / discovery.py / notify.py / systests.py
+├── cases/           # 用例库（full 43 / gen 21 / chains 3；quick 6 为冒烟子集）
+├── scripts/         # deb/exe 打包、VM 通道、判卷自检等脚本
+└── tests/           # 端到端与适配器测试
 ```
-
-## 使用（开发中）
 
 ## 使用
 
@@ -46,12 +46,22 @@ uv run memhall doctor        # 一键发现本机/评测机智能体 + 评测环
 # 三路探测：本机（PATH+配置目录+版本）、openKylin VM（SSH 单往返复合探测，
 # 含 brain.db 记忆库在位）、环境就绪度（密钥/SSH/网关可达），仿 brew doctor
 
-# 一轮评测（Mock 适配器，离线零成本，全链路出报告）
-uv run memhall run -a mock -c cases/full -o runs
+uv run memhall ui            # Web UI（本地 127.0.0.1:8300，自动开浏览器）
+# 浏览器里选适配器和用例库发起评测，问答与记忆快照逐条直播（SSE）；
+# exe 双击默认走 pywebview 原生窗口；URL hash 可直达标签页
+
+# 一轮评测（命令行）
+uv run memhall run -a mock -c cases/full -o runs      # Mock 适配器，离线零成本
+uv run memhall run -a hermes -c cases/full -o runs    # 真智能体（SSH 驱动 VM）
+# 适配器：mock / hermes / kylinbot（VM 内）/
+#         hermes-local / claude-local / qwen-local / opencode（本机）
 # 产物：runs/<run_id>/{manifest.json, verdicts.jsonl, metrics.json, radar.png, report.md}
 #       runs/<run_id>/cases/<case_id>/evidence.jsonl（每条判定可下钻证据哈希）
 
-uv run memhall report runs/<run_id>    # 对已有 run 重渲染报告
+uv run memhall report runs/<run_id>     # 对已有 run 重渲染报告（缺 verdicts 时从证据重放）
+uv run memhall compare runs/A runs/B    # 对比雷达 + 判定翻转明细（两智能体/两次运行）
+
+uv run memhall systest -a hermes        # 系统级测试：重启/拨钟/多用户/断网（真机真做）
 
 # 双 LLM judge 判卷（可选，替代默认的离线脚本判卷；两 judge 需跨厂商）
 export JUDGE_A_BASE_URL=... JUDGE_A_MODEL=... JUDGE_A_KEY=...
@@ -61,27 +71,35 @@ uv run memhall run -a mock --judge dual
 uv run pytest tests/ -q                # 测试（含端到端冒烟）
 ```
 
-判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁）。
+判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁），未决判定单列 HUMAN_REVIEW 待人工复核，不计入运行无效。
+
+评测收尾可选 UKUI 桌面通知（notify-send）并自动弹出雷达图（xdg-open）。
 
 ## 安装（openKylin / Debian 系）
 
 ```bash
-sudo dpkg -i memhall_0.1.0_all.deb     # 内置全部依赖 wheel，安装不联网
-memhall run -a mock -c /usr/share/memhall/cases/full -o /tmp/mh-demo
+sudo dpkg -i memhall_0.2.1_all.deb     # 内置全部依赖 wheel，安装不联网
+memhall run -a mock -c /usr/share/memhall/cases/full -o ~/memhall-runs
 dpkg -r memhall                         # 卸载干净（prerm 清 /usr/lib/memhall）
 ```
 
+系统目录只读：run 产物写 `~/memhall-runs`，配置读 `~/memhall.env`。
+
 包构建在 openKylin 目标机上原生完成（`scripts/build_deb_vm.sh`：清华源拉依赖 wheel → 组装离线安装树 → dpkg-deb），保证 wheel ABI 与目标机 Python 精确匹配、可复现。
+
+## 安装（Windows）
+
+`scripts/build_exe.sh` 打包两种发行物：`dist/MemHall/`（onedir，启动快）与 `dist/麟阁MemHall-单文件版.exe`（单文件，可直发）。双击即进 Web UI 原生窗口。
 
 ## 平台支持
 
 | 平台 | 支持度 | 说明 |
 |---|---|---|
-| Windows | ✅ 原生 | 开发与评测主战场：被测智能体经 SSH 驱动 VM，宿主 OS 无关；CLI 已做 UTF-8 控制台适配 |
+| Windows | ✅ 原生 | 开发与评测主战场：被测智能体经 SSH 驱动 VM，宿主 OS 无关；exe 发行见上节 |
 | WSL | ✅ | 能跑（纯 Python + pip 依赖），但无增益——评测目标在 VM，多一层反而慢 |
 | openKylin / Debian 系 | ✅ .deb | 见上节，离线安装 |
 
-功能影响：六维评测、双智能体判卷、雷达图、报告全链路平台无关；平台差异仅在安装方式（uv/pip vs .deb）与控制台编码。
+功能影响：六维评测、双智能体判卷、雷达图、报告全链路平台无关；平台差异仅在安装方式（uv/pip vs .deb/exe）与控制台编码。
 
 ## 许可
 
@@ -89,4 +107,6 @@ Apache-2.0（见 [LICENSE](LICENSE)）
 
 ## 状态
 
-W2（2026-09-28）：双真智能体对比达成——Hermes 81.6% vs KylinBot 61.5%（39 探测点全有效），判卷质检金标准 10/10，用例库 38 条（种子 17 + 生成 21），.deb v0.1 装机验收通过，win 分支提供 Windows 原生适配。里程碑见 team-plan.md。
+v0.2.1（2026-09-29）：Web UI 评测直播、`compare` 对比 CLI、系统级测试（重启/拨钟/多用户/断网，hermes 真机 4/4）、claude/qwen 本机适配器（沙箱隔离配置目录）、UKUI 桌面通知；Mock v2 缺陷注入基线（措辞解耦后总分 62%，六维显式缺陷模式表）。里程碑见 team-plan.md。
+
+双智能体对比（W2，09-28）：Hermes 81.6% vs KylinBot 61.5%（39 探测点全有效），判卷质检金标准 10/10。
