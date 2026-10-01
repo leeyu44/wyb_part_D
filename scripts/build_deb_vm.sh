@@ -13,11 +13,28 @@ pip3 wheel -q --no-deps -i https://pypi.tuna.tsinghua.edu.cn/simple -w $W .
 
 STAGE=~/deb-stage/memhall
 rm -rf ~/deb-stage
-mkdir -p $STAGE/DEBIAN $STAGE/usr/share/memhall/scripts $STAGE/usr/bin
+mkdir -p $STAGE/DEBIAN $STAGE/usr/share/memhall/scripts $STAGE/usr/bin \
+  $STAGE/usr/share/applications $STAGE/usr/share/pixmaps
 cp -r $W $STAGE/usr/share/memhall/wheels
 cp -r cases $STAGE/usr/share/memhall/cases
 cp README.md LICENSE $STAGE/usr/share/memhall/
 cp scripts/judge_selftest.py $STAGE/usr/share/memhall/scripts/
+cp packaging/memhall.svg $STAGE/usr/share/pixmaps/memhall.svg
+
+cat > $STAGE/usr/share/applications/memhall.desktop <<'DEOF'
+[Desktop Entry]
+Type=Application
+Name=麟阁 MemHall
+Name[en]=MemHall
+GenericName=智能体记忆评测基准
+GenericName[en]=Agent Memory Benchmark
+Comment=教-隔-考三阶段剧本评测智能体长期记忆，输出六维能力雷达图
+Exec=/usr/bin/memhall ui
+Terminal=false
+Categories=Development;Utility;
+Icon=memhall
+StartupNotify=true
+DEOF
 
 cat > $STAGE/usr/bin/memhall <<'WEOF'
 #!/bin/sh
