@@ -4,6 +4,8 @@
 
 A Memory Benchmark for Agents on the openKylin Ecosystem
 
+[![CI](https://github.com/shangjian2023/MemHall/actions/workflows/ci.yml/badge.svg)](https://github.com/shangjian2023/MemHall/actions/workflows/ci.yml)
+
 > 名字取自麒麟阁——汉代评定功臣、画像记名的殿堂：给记忆能力优秀的智能体立榜。
 
 给跑在 openKylin 上的智能体测记性，全自动、可复现：用「教 → 隔 → 考」三阶段剧本驱动任意智能体，把对话日志、记忆快照、操作记录、文件变化统一为证据，自动评分并输出六维能力雷达图。
@@ -91,13 +93,17 @@ dpkg -r memhall                         # 卸载干净（prerm 清 /usr/lib/memh
 
 `scripts/build_exe.sh` 打包两种发行物：`dist/MemHall/`（onedir，启动快）与 `dist/麟阁MemHall-单文件版.exe`（单文件，可直发）。双击即进 Web UI 原生窗口。
 
-## 平台支持
+## 平台支持（分级）
 
-| 平台 | 支持度 | 说明 |
-|---|---|---|
-| Windows | ✅ 原生 | 开发与评测主战场：被测智能体经 SSH 驱动 VM，宿主 OS 无关；exe 发行见上节 |
-| WSL | ✅ | 能跑（纯 Python + pip 依赖），但无增益——评测目标在 VM，多一层反而慢 |
-| openKylin / Debian 系 | ✅ .deb | 见上节，离线安装 |
+主力线是 openKylin：级别越高，验证深度越深——Tier 1 的真机系统级测试（重启/拨钟/多用户/断网）只能在 openKylin 真机上做，是其他平台复制不了的验证深度。
+
+| 级别 | 平台 | 验证深度 | 证据 |
+|---|---|---|---|
+| **Tier 1 旗舰** | openKylin 3.0 | 全链路验收：全量测试 + 真机系统级测试（重启存活/拨钟隔天/多用户隔离/断网存活）+ 目标机原生构建 .deb + UKUI 桌面通知 | [CI](https://github.com/shangjian2023/MemHall/actions/workflows/ci.yml) · [build_deb_vm.sh](scripts/build_deb_vm.sh) · 上文安装节 |
+| Tier 2 | 主流 Linux · Windows 10/11 | 核心功能等价：CI 矩阵（ubuntu/windows × Python 3.11/3.12）每提交跑题库门禁 + 全量测试；Windows 另有 exe 发行 | [CI](https://github.com/shangjian2023/MemHall/actions/workflows/ci.yml) · 上文安装节 |
+| Tier 3 | macOS / 其他 Linux | 尽力而为：纯 Python 源码安装（uv/pip），未持续验证 | — |
+
+注：WSL 能跑但无增益——评测目标在 VM 里，多一层反而慢，不作为支持目标。
 
 功能影响：六维评测、双智能体判卷、雷达图、报告全链路平台无关；平台差异仅在安装方式（uv/pip vs .deb/exe）与控制台编码。
 
