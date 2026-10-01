@@ -666,8 +666,15 @@ $("#docRefresh").addEventListener("click",()=>loadDoctor(true));
 /* ---------- 评测 ---------- */
 async function loadCaseDirs(){
   try{const d=await api("/api/case-dirs");
-    $("#fCases").innerHTML=d.dirs.map(x=>`<option>${esc(x)}</option>`).join("");
-  }catch(e){$("#fCases").innerHTML='<option>cases/full</option>';}
+    $("#fCases").innerHTML=d.sets.map(x=>`<option value="${esc(x.id)}">${esc(x.label)}</option>`).join("");
+  }catch(e){$("#fCases").innerHTML='<option value="cases/full">cases/full</option>';}
+}
+async function loadAdapters(){
+  /* 静态 option 是兜底；接口给出真实可跑性，未检出的标注出来防误选 */
+  try{const st=await api("/api/adapter-status");
+    $("#fAdapter").innerHTML=Object.entries(st).map(([id,v])=>
+      `<option value="${id}">${esc(v.label)}${v.ok?"":"（未检出）"}</option>`).join("");
+  }catch(e){}
 }
 function logLine(cls,msg,title){
   const c=$("#console");
@@ -948,7 +955,7 @@ window.addEventListener("load",()=>{
       .from("#nav",{y:-10,opacity:0,duration:.4,ease:"power2.out"}, "-=.2")
       .from("#tab-doctor .card",{y:16,opacity:0,duration:.45,ease:"power2.out"}, "-=.18");
     }
-    loadDoctor();loadCaseDirs();
+    loadDoctor();loadCaseDirs();loadAdapters();
     api("/api/meta").then(d=>{$("#ftVer").textContent="服务端 v"+d.version+" · py"+d.python;}).catch(()=>{});
   });
 });

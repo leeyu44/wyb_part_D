@@ -64,6 +64,14 @@ def _case_roots() -> list[Path]:
     if (deb_share / "cases").is_dir():
         roots.append(deb_share)
     return roots
+
+# 用例集中文说明（键=目录名）。顺序即 UI 下拉框排序，quick 在最前：装完先冒烟。
+CASE_SET_DESC = {
+    "quick": "冒烟自检 · {n} 题 · 分钟级离线，装完先跑这个",
+    "full": "种子题库 · {n} 题 · 六能力×六内容全覆盖（主力评测集）",
+    "gen": "生成器扩量 · {n} 题 · 参数化模板生成，防智能体背题",
+    "chains": "任务链 · {n} 题 · 多步任务弧，考操作与文件证据",
+}
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 SECRET_KEYS = {"VM_PASS", "AGENT_LLM_KEY", "JUDGE_A_KEY", "JUDGE_B_KEY"}
@@ -168,6 +176,22 @@ def create_app() -> FastAPI:
         from memhall.discovery import LOCAL_AGENTS
         return {"names": [a[0] for a in LOCAL_AGENTS]}
 
+    @app.get("/api/adapter-status")
+    def adapter_status() -> dict:
+        """跑页下拉框的真实可跑性：与各适配器同款 which() 探测，不装不骗人。
+
+        mock 内置恒可用；VM 型取决于 VM_HOST 通道配置。"""
+        import shutil
+        vm = bool(os.environ.get("VM_HOST"))
+        return {
+            "mock": {"label": "mock（离线演示）", "ok": True},
+            "hermes-local": {"label": "hermes（本机）", "ok": shutil.which("hermes") is not None},
+            "claude-local": {"label": "claude code（本机）", "ok": shutil.which("claude") is not None},
+            "qwen-local": {"label": "qwen code（本机）", "ok": shutil.which("qwen") is not None},
+            "hermes": {"label": "hermes（VM 真机）", "ok": vm},
+            "kylinbot": {"label": "kylinbot（VM 真机）", "ok": vm},
+        }
+
     @app.get("/api/meta")
     def meta() -> dict:
         import sys
@@ -181,15 +205,20 @@ def create_app() -> FastAPI:
     # ---------- 用例目录 ----------
     @app.get("/api/case-dirs")
     def case_dirs() -> dict:
-        dirs: list[str] = []
+        found: dict[str, Path] = {}
         for root in _case_roots():
             base = root / "cases"
             if base.is_dir():
-                dirs += sorted(str(d.relative_to(root)).replace("\\", "/")
-                               for d in base.iterdir() if d.is_dir())
-        seen: set[str] = set()
-        dirs = [d for d in dirs if not (d in seen or seen.add(d))]
-        return {"dirs": dirs or ["cases/full"]}
+                for d in base.iterdir():
+                    if d.is_dir():
+                        found.setdefault(d.name, d)
+        order = {k: i for i, k in enumerate(CASE_SET_DESC)}
+        sets = [
+            {"id": f"cases/{name}",
+             "label": CASE_SET_DESC.get(name, "{name} · {n} 题").format(n=len(list(d.glob("*.y*ml"))), name=name)}
+            for name, d in sorted(found.items(), key=lambda kv: (order.get(kv[0], 99), kv[0]))
+        ]
+        return {"sets": sets or [{"id": "cases/full", "label": "种子题库（默认）"}]}
 
     # ---------- 运行会话 ----------
     @app.post("/api/start")
