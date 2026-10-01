@@ -178,16 +178,16 @@ def create_app() -> FastAPI:
 
     @app.get("/api/adapter-status")
     def adapter_status() -> dict:
-        """跑页下拉框的真实可跑性：与各适配器同款 which() 探测，不装不骗人。
-
-        mock 内置恒可用；VM 型取决于 VM_HOST 通道配置。"""
+        """跑页下拉框的真实可跑性：与适配器同款 find_cli 探测（PATH+已知安装位），
+        不装不骗人。mock 内置恒可用；VM 型取决于 VM_HOST 通道配置。"""
         import shutil
+        from memhall.discovery import ADAPTER_CLI, find_cli
         vm = bool(os.environ.get("VM_HOST"))
         return {
             "mock": {"label": "mock（离线演示）", "ok": True},
-            "hermes-local": {"label": "hermes（本机）", "ok": shutil.which("hermes") is not None},
-            "claude-local": {"label": "claude code（本机）", "ok": shutil.which("claude") is not None},
-            "qwen-local": {"label": "qwen code（本机）", "ok": shutil.which("qwen") is not None},
+            "hermes-local": {"label": "hermes（本机）", "ok": bool(find_cli(*ADAPTER_CLI["hermes"]))},
+            "claude-local": {"label": "claude code（本机）", "ok": bool(find_cli(*ADAPTER_CLI["claude"]))},
+            "qwen-local": {"label": "qwen code（本机）", "ok": bool(find_cli(*ADAPTER_CLI["qwen"]))},
             "hermes": {"label": "hermes（VM 真机）", "ok": vm},
             "kylinbot": {"label": "kylinbot（VM 真机）", "ok": vm},
         }

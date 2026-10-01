@@ -66,6 +66,36 @@ class DoctorReport:
         return sorted(names)
 
 
+# 适配器 CLI 候选（单源）：PATH 名在前，其后是已知安装位。hermes 候选链对齐
+# clawd hooks/hermes-install.js hermesCommandCandidates（HERMES_HOME 推导 +
+# .local/bin + win32 venv 变体），外加我们自装的 ~/.hermes/bin 布局；claude/qwen
+# 是 PATH 型 CLI，补 npm 用户前缀位。扫描（LOCAL_AGENTS）、适配器 _resolve_exe、
+# UI /api/adapter-status 三处共用这份清单，探测口径永远一致。
+def _hermes_candidates() -> list[str]:
+    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+    cands = [f"{home}/bin/hermes", f"{home}/hermes-agent/venv/bin/hermes"]
+    if os.name == "nt":
+        cands.append(f"{home}/hermes-agent/venv/Scripts/hermes.exe")
+        lad = os.environ.get("LOCALAPPDATA", "")
+        if lad:
+            cands.append(f"{lad}/hermes/hermes-agent/venv/Scripts/hermes.exe")
+    else:
+        cands.append(str(Path.home() / ".local/bin/hermes"))
+    return ["hermes", *cands]
+
+
+ADAPTER_CLI: dict[str, list[str]] = {
+    "hermes": _hermes_candidates(),
+    "claude": ["claude", "~/.local/bin/claude"],
+    "qwen": ["qwen", "~/.local/bin/qwen"],
+}
+
+
+def find_cli(*candidates: str) -> str:
+    """按序探测 CLI：PATH 名或 ~/、绝对路径均可，返回首个命中（""=未找到）。"""
+    return next((w for c in candidates if (w := _which(c))), "")
+
+
 # 智能体注册表 —— 方案对齐 clawd-on-desk 的 agent-installation-detector.js：
 # ①只收真智能体（CLI 编程智能体 + IDE 内嵌），模型运行时/聊天客户端/管理工具
 #   不进名单（ollama 等见 EXTRA_TOOLS，检出后单独一排说明）
@@ -75,13 +105,13 @@ class DoctorReport:
 # (名字, 可执行候选, 配置目录候选, 适配器名, 类别)
 LOCAL_AGENTS: list[tuple[str, list[str], list[str], str, str]] = [
     # --- CLI 编程智能体 ---
-    ("claude-code", ["claude"], ["~/.claude"], "", "cli"),
+    ("claude-code", ADAPTER_CLI["claude"], ["~/.claude"], "", "cli"),
     ("codex", ["codex"], ["~/.codex"], "", "cli"),
     ("dsh (DeepSeek Harness)", ["dsh"], ["~/.dsh"], "", "cli"),
     ("gemini-cli", ["gemini"], ["~/.gemini"], "", "cli"),
     ("opencode", ["opencode"], ["~/.config/opencode"], "", "cli"),
     ("mimocode", ["mimocode"], ["~/.config/mimocode"], "", "cli"),
-    ("qwen-code", ["qwen"], ["~/.qwen"], "", "cli"),
+    ("qwen-code", ADAPTER_CLI["qwen"], ["~/.qwen"], "", "cli"),
     ("qwenpaw", ["qwenpaw"], ["~/.qwenpaw"], "", "cli"),
     ("zcode", ["zcode"], ["~/.zcode"], "", "cli"),
     ("pi", ["pi"], ["~/.pi/agent"], "", "cli"),
@@ -99,7 +129,7 @@ LOCAL_AGENTS: list[tuple[str, list[str], list[str], str, str]] = [
     ("aider", ["aider"], ["~/.aider.conf.yml"], "", "cli"),
     ("goose", ["goose"], ["~/.config/goose"], "", "cli"),
     ("crush", ["crush"], ["~/.config/crush"], "", "cli"),
-    ("hermes", ["hermes"], ["~/.hermes"], "hermes-local", "cli"),
+    ("hermes", ADAPTER_CLI["hermes"], ["~/.hermes"], "hermes-local", "cli"),
     ("kylin-bot", ["kylin-bot"], ["~/.kylinbot"], "kylinbot", "cli"),
     # --- IDE / 编辑器内智能体 ---
     ("cline", ["cline"], ["~/.cline"], "", "ide"),
@@ -158,7 +188,11 @@ def _which(name: str) -> str:
     ①只索引文件；②POSIX 校验可执行位；③Windows 同名多扩展取 PATHEXT 优先级
     最高者——fnm/git 的无扩展 bash shim 蹭不掉真身 claude.exe/claude.cmd
     （否则版本探测时 CreateProcess 找不到可执行文件直接失败）。"""
-    global _path_idx
+    # ~/ 或绝对路径：直接验文件，不走 PATH 索引（clawd 同款思路：
+    # 候选清单里混排 PATH 名与安装位全路径）
+    if name.startswith(("~", "/")) or (os.name == "nt" and name[1:2] == ":"):
+        p = Path(name).expanduser()
+        return str(p) if p.is_file() and os.access(p, os.X_OK) else ""
     global _path_idx
     if _path_idx is None:
         idx: dict[str, str] = {}

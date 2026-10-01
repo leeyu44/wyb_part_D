@@ -56,10 +56,10 @@ class LocalClaudeAdapter(AgentAdapter):
 
     def _resolve_exe(self) -> str:
         if self._exe is None:
-            from memhall.discovery import _which
-            exe = _which("claude")
+            from memhall.discovery import ADAPTER_CLI, find_cli
+            exe = find_cli(*ADAPTER_CLI["claude"])
             if not exe:
-                raise AgentUnavailable("PATH 里找不到 claude（npm i -g @anthropic-ai/claude-code）")
+                raise AgentUnavailable("PATH 与 ~/.local/bin 均找不到 claude（npm i -g @anthropic-ai/claude-code）")
             self._exe = exe
         return self._exe
 

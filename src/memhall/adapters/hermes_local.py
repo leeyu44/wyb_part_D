@@ -58,10 +58,10 @@ class LocalHermesAdapter(AgentAdapter):
 
     def _resolve_exe(self) -> str:
         if self._exe is None:
-            from memhall.discovery import _which
-            exe = _which("hermes")
+            from memhall.discovery import ADAPTER_CLI, find_cli
+            exe = find_cli(*ADAPTER_CLI["hermes"])
             if not exe:
-                raise AgentUnavailable("PATH 里找不到 hermes（安装后重开终端）")
+                raise AgentUnavailable("PATH 与 ~/.hermes/bin 均找不到 hermes（安装后重开终端）")
             self._exe = exe
         return self._exe
 

@@ -53,10 +53,10 @@ class LocalQwenAdapter(AgentAdapter):
 
     def _resolve_exe(self) -> str:
         if self._exe is None:
-            from memhall.discovery import _which
-            exe = _which("qwen")
+            from memhall.discovery import ADAPTER_CLI, find_cli
+            exe = find_cli(*ADAPTER_CLI["qwen"])
             if not exe:
-                raise AgentUnavailable("PATH 里找不到 qwen（npm i -g @qwen-code/qwen-code）")
+                raise AgentUnavailable("PATH 与 ~/.local/bin 均找不到 qwen（npm i -g @qwen-code/qwen-code）")
             self._exe = exe
         return self._exe
 
