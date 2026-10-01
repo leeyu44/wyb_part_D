@@ -4,8 +4,17 @@ version = "0.2.1"
 description = "麟阁 MemHall —— 面向 openKylin 生态的智能体记忆能力评测基准"
 authors = [{ name = "MemHall Team" }]
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+# 平台分级声明：Tier 1 = openKylin 3.0（真机 systest + .deb）；Tier 2 = 主流 Linux/Windows（CI 矩阵）
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",

@@ -1,5 +1,7 @@
 # CI 门禁：题库 lint + 全量测试。
 # 对应两类高频事故：数据侧（schema/防污染/覆盖矩阵/离线可判）与代码侧（e2e/适配器回归）。
+# 平台矩阵 = Tier 2 证据：Tier 1 openKylin 的真机 systest（重启/拨钟/断网）在 VM 侧跑，
+# GitHub 没有 openKylin runner，其证据链在 runs/ 产物与 systest 报告。
 name: CI
 
 on:
@@ -7,14 +9,20 @@ on:
     branches: [main, win]
   pull_request:
 
+env:
+  # Windows runner 控制台默认 GBK，lint 打印 ⚠ / 报告路径会 UnicodeEncodeError
+  PYTHONIOENCODING: utf-8
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 3.11 = 本机开发环境；3.12 = openKylin 3.0 目标机
+        # 3.11 = Windows 开发环境；3.12 = openKylin 3.0 目标机
         python-version: ["3.11", "3.12"]
+        # Windows = 开发/评测宿主；ubuntu = Tier 1 openKylin(Debian 系) 的代理验证
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
