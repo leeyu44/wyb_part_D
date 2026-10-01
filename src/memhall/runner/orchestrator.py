@@ -196,7 +196,13 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
         供 UI 直播问答过程；回调异常被吞，不影响评测。
     """
     run_id = _utc().strftime("%Y%m%d-%H%M%S") + f"-{adapter_name}"
-    run_dir = out_dir / run_id
+    # 快机同秒跑两轮（mock 单轮 2 秒级）会互相覆盖，冲突时加序号后缀
+    base_dir = out_dir / run_id
+    run_dir, k = base_dir, 2
+    while run_dir.exists():
+        run_dir = out_dir / f"{run_id}-{k}"
+        k += 1
+    run_id = run_dir.name
     stores: list[EvidenceStore] = []
     for i, case in enumerate(cases):
         _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
