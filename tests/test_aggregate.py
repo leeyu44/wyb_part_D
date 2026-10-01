@@ -11,7 +11,7 @@ def _mk_run(tmp_path, adapter, cases, overall, caps, run_id="20260930-000001-x")
     d = tmp_path / run_id
     d.mkdir()
     (d / "manifest.json").write_text(
-        json.dumps({"adapter": adapter, "cases": cases, "run_id": run_id}),
+        json.dumps({"adapter": adapter, "cases": [cases], "run_id": run_id}),
         encoding="utf-8")
     (d / "metrics.json").write_text(
         json.dumps({"overall_score": overall, "capability_scores": caps}),

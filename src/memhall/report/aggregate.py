@@ -34,7 +34,8 @@ def aggregate_runs(run_dirs: list[Path], out_dir: Path) -> dict:
         metrics = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
         runs.append((manifest, metrics))
 
-    keys = {(m.get("adapter"), m.get("cases")) for m, _ in runs}
+    # manifest.cases 是 list（用例清单），str 化后才能进集合键
+    keys = {(m.get("adapter"), str(m.get("cases"))) for m, _ in runs}
     if len(keys) != 1:
         raise ValueError(f"口径混杂，拒绝聚合：{sorted(map(str, keys))}（应同智能体同题库）")
 
