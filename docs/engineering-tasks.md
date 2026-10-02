@@ -8,7 +8,9 @@
 
 > 进度：P0 六条已于 2026-10-02 落地（mock 基线分数不变：full 62.2% / quick 71.4%，71 测试全绿）。顺带修掉 ruff F 检查逮到的存量真 bug：`_open_app_window` 引用未导入的 `shutil`（pywebview 缺失时的 Edge 回退路径会 NameError）。lint 全库门禁时发现 gen 生成题无字面 canary——按 `source=generated` 豁免（seed 随机 token 防污染等价，存档稳定性约束生成器不可改）。
 >
-> P1 六条同日落地：judge 判卷换 httpx（单题总预算 JUDGE_TOTAL_BUDGET=300s 兜底，替代 12 分钟级阻塞）；判卷离线自检进 CI（ScriptedJudge × 金标准错判零容忍——实现过程中顺带修掉两个真实宽松缺陷：①新旧并列回答被单侧子串命中误判 ②同模板异值回答被锚例 0.8 重叠误配，均改为转人工）；`_answer_for` 精确匹配优先；凭据全走 stdin/base64（hermes 的 API key、sudo 密码不再落 VM 命令行）；SSH 主机密钥 TOFU 钉扎（~/.memhall/known_hosts，指纹变化拒连）；实验室 IP 移出发行默认值（.env.example/remote/discovery，vm_* 运维工具保留可覆盖的私有默认）。mock 基线仍为 62.2%（六维逐项一致），83 测试全绿。
+> P1 六条同日落地（T13-T16 仓库卫生同日完成：okim-bench/out 运行产物出库并归档标注、比赛材料移 docs/contest/、顶层 8 个空目录清理、README 文档表加状态列+过程稿头部标注、.pytest_cache 进 gitignore）。
+>
+> 原 P1 记录：judge 判卷换 httpx（单题总预算 JUDGE_TOTAL_BUDGET=300s 兜底，替代 12 分钟级阻塞）；判卷离线自检进 CI（ScriptedJudge × 金标准错判零容忍——实现过程中顺带修掉两个真实宽松缺陷：①新旧并列回答被单侧子串命中误判 ②同模板异值回答被锚例 0.8 重叠误配，均改为转人工）；`_answer_for` 精确匹配优先；凭据全走 stdin/base64（hermes 的 API key、sudo 密码不再落 VM 命令行）；SSH 主机密钥 TOFU 钉扎（~/.memhall/known_hosts，指纹变化拒连）；实验室 IP 移出发行默认值（.env.example/remote/discovery，vm_* 运维工具保留可覆盖的私有默认）。mock 基线仍为 62.2%（六维逐项一致），83 测试全绿。
 
 ---
 
@@ -80,22 +82,22 @@
 
 ## P2 · 仓库卫生（E 主责，半天）
 
-- [ ] **T13 okim-bench 归档 + out/ 产物出库**（E，1h）
+- [x] **T13 okim-bench 归档 + out/ 产物出库**（E，1h）
   - 证据：`okim-bench/out/` 提交了运行产物（brain_final.db、radar png、metrics.json）；okim-bench 与 `src/memhall/scoring` 双实现（judge.py 自注"移植自 okim-bench"）
   - 做法：`git rm -r okim-bench/out`；okim-bench/README 头部加"W1 原型，权威实现在 src/memhall/scoring"标注
   - 验收：git 里无 out/ 目录；README 标注在位
 
-- [ ] **T14 比赛材料移出仓库根**（E，0.5h）
+- [x] **T14 比赛材料移出仓库根**（E，0.5h）
   - 证据：`ai_open_kylin_..._XaCQyZepC8.pdf`、`challenge_fitz.txt` 躺在根目录
   - 做法：移入 `docs/contest/`（保留可追溯）或出库
   - 验收：仓库根只有工程文件
 
-- [ ] **T15 清理死目录与过时文档头**（E，0.5h）
+- [x] **T15 清理死目录与过时文档头**（E，0.5h）
   - 证据：顶层 8 个空目录（adapters/ cli/ runner/ scoring/ schema/ generators/ evidence/ report/，旧布局残留）；`src/memhall/__init__.py` docstring 还描述已不存在的 evidence/、cli/ 子包
   - 做法：rmdir 空目录；docstring 改成当前真实结构
   - 验收：顶层无空目录；docstring 与实际一致
 
-- [ ] **T16 docs 分级**（E，1h）
+- [x] **T16 docs 分级**（E，1h）
   - 证据：`docs/` 混着带日期临时文档（environment-vbox-20260924.md）和带版本号草稿（okim-bench-系统设计-v0.1.md），与正式契约文档不分级
   - 做法：定稿/契约/归档三层目录或在 README 索引标状态
   - 验收：新读者按 README 文档表 30 秒分清"权威文档"与"过程稿"

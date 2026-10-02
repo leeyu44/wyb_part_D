@@ -12,12 +12,16 @@ A Memory Benchmark for Agents on the openKylin Ecosystem
 
 ## 文档
 
-| 文档 | 内容 |
-|---|---|
-| [design.md](design.md) | 总体技术设计（交付物 a 底稿） |
-| [team-plan.md](team-plan.md) | 五人分工、4 周排期、协作规约 |
-| [environment.md](environment.md) | 环境基线与搭建步骤 |
-| [okim-bench/README.md](okim-bench/README.md) | 评分子系统（C 角色，L1→L3 判卷流水线） |
+| 文档 | 状态 | 内容 |
+|---|---|---|
+| [design.md](design.md) | **正式** | 总体技术设计（交付物 a 底稿） |
+| [team-plan.md](team-plan.md) | **正式** | 五人分工、4 周排期、协作规约 |
+| [environment.md](environment.md) | **正式** | 环境基线与搭建步骤 |
+| [docs/contracts/](docs/contracts/README.md) | **契约** | 接口单一真相源（adapter / case / evidence-verdict） |
+| [docs/dataset-card.md](docs/dataset-card.md) | **正式** | 用例库数据集说明卡 |
+| [docs/engineering-tasks.md](docs/engineering-tasks.md) | 过程 | 工程化整改队列与进度 |
+| [okim-bench/README.md](okim-bench/README.md) | 归档 | W1 评分原型（权威实现在 src/memhall/scoring） |
+| [docs/](docs/) 其余 | 过程稿 | 调研、阶段性环境记录、原型设计稿（头部有归档标注） |
 
 ## 目录结构
 
@@ -25,7 +29,7 @@ A Memory Benchmark for Agents on the openKylin Ecosystem
 memhall/
 ├── design.md / team-plan.md / environment.md   # 三份基准文档
 ├── docs/            # 方案文档（A 总稿）+ contracts/（接口契约）
-├── okim-bench/      # 评分子系统：L1 确定性检查 → L2 语义规则 → L3 双 LLM judge
+├── okim-bench/      # W1 评分原型（已归档；权威实现在 src/memhall/scoring）
 ├── src/memhall/     # 源码包
 │   ├── adapters/    # 智能体适配器（mock/hermes/kylinbot/claude/qwen/opencode…）
 │   ├── runner/      # 三阶段编排
