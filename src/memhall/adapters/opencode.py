@@ -71,9 +71,14 @@ class OpenCodeAdapter(AgentAdapter):
         return self._exe
 
     def _write_config(self) -> None:
-        base = os.environ.get("AGENT_LLM_BASE_URL", "").rstrip("/")
-        key = os.environ.get("AGENT_LLM_KEY", "")
-        self.model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
+        # 统一模型模式（GATEWAY_URL）优先：走本地网关，真凭据只在网关进程
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("opencode")
+        base = (gw["base_url"] if gw
+                else os.environ.get("AGENT_LLM_BASE_URL", "")).rstrip("/")
+        key = gw["key"] if gw else os.environ.get("AGENT_LLM_KEY", "")
+        self.model = (gw["model"] if gw
+                      else os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus"))
         if not (base and key):
             raise AgentUnavailable("缺 AGENT_LLM_BASE_URL / AGENT_LLM_KEY（检查 .env）")
         self.model_ref = f"memhall-gw/{self.model}"

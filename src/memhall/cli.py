@@ -110,6 +110,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                                case_source=args.cases)
     run_dir = Path(args.out) / run_id
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    from memhall.gateway import model_backend
+    manifest["model_backend"] = model_backend()
 
     verdicts = []
     for case, store in zip(cases, stores, strict=True):
@@ -246,6 +248,39 @@ def cmd_systest(args: argparse.Namespace) -> int:
                     rep["n_pass"] / rep["n_total"], rep["n_pass"], rep["n_total"],
                     rep["run_dir"], radar=f"{rep['run_dir']}/systest.png")
     return 0 if rep["n_pass"] == rep["n_total"] else 1
+
+
+def cmd_gateway(args: argparse.Namespace) -> int:
+    from pathlib import Path as _P
+
+    from memhall.gateway import DEFAULT_PORT, aggregate_usage, create_gateway_app, default_log_path
+    log_path = _P(args.log) if args.log else default_log_path()
+    if args.report:
+        agg = aggregate_usage(log_path)
+        print(f"记账文件: {log_path}")
+        if not agg["agents"]:
+            print("（暂无记录）")
+            return 0
+        print(f"{'智能体':<18} {'请求':>6} {'错误':>4} {'入tokens':>9} {'出tokens':>9} {'合计':>9}")
+        for tag, a in sorted(agg["agents"].items()):
+            print(f"{tag:<18} {a['n']:>6} {a['errors']:>4} "
+                  f"{a['prompt_tokens']:>9} {a['completion_tokens']:>9} {a['total_tokens']:>9}")
+        return 0
+    upstream = args.upstream or os.environ.get("GATEWAY_UPSTREAM_URL", "")
+    key = args.key or os.environ.get("GATEWAY_UPSTREAM_KEY", "")
+    model = args.model or os.environ.get("GATEWAY_MODEL", "")
+    if not (upstream and key and model):
+        print("缺网关配置：--upstream/--model/--key 或环境变量 "
+              "GATEWAY_UPSTREAM_URL/GATEWAY_MODEL/GATEWAY_UPSTREAM_KEY", file=sys.stderr)
+        return 1
+    port = args.port or DEFAULT_PORT
+    app = create_gateway_app(upstream, key, model, log_path)
+    print(f"统一模型网关: http://{args.host}:{port}  model={model}  "
+          f"upstream={upstream}  记账={log_path}")
+    print("被测智能体侧只需 GATEWAY_URL + GATEWAY_MODEL 两个环境变量（dummy key 自动派生）")
+    import uvicorn
+    uvicorn.run(app, host=args.host, port=port, log_level="warning")
+    return 0
 
 
 def cmd_ui(args: argparse.Namespace) -> int:
@@ -399,6 +434,19 @@ def main() -> None:
                            parents=[common])
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
     p_doc.set_defaults(func=cmd_doctor)
+
+    p_gw = sub.add_parser("gateway", help="统一模型网关（被测智能体流量必经代理）",
+                          parents=[common])
+    p_gw.add_argument("--host", default="127.0.0.1",
+                      help="监听地址（VM 智能体要用时指 0.0.0.0）")
+    p_gw.add_argument("--port", type=int, default=0, help="端口（默认 8311）")
+    p_gw.add_argument("--upstream", default="", help="上游 base_url（默认 GATEWAY_UPSTREAM_URL）")
+    p_gw.add_argument("--model", default="", help="统一模型名（默认 GATEWAY_MODEL）")
+    p_gw.add_argument("--key", default="",
+                      help="上游 API key（默认 GATEWAY_UPSTREAM_KEY；命令行会进 ps，优先用环境变量）")
+    p_gw.add_argument("--log", default="", help="记账 JSONL 路径（默认 ~/.memhall/gateway-usage.jsonl）")
+    p_gw.add_argument("--report", action="store_true", help="不启服务，打印现有记账聚合")
+    p_gw.set_defaults(func=cmd_gateway)
 
     p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）",
                           parents=[common])

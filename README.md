@@ -71,6 +71,17 @@ uv run memhall compare runs/A runs/B    # 对比雷达 + 判定翻转明细（�
 
 uv run memhall systest -a hermes        # 系统级测试：重启/拨钟/多用户/断网（真机真做）
 
+# 统一模型对照：被测智能体流量必经本地网关——同后端同模型，对照才有意义
+# 网关侧配置（真凭据只放环境变量）：
+export GATEWAY_UPSTREAM_URL=... GATEWAY_UPSTREAM_KEY=... GATEWAY_MODEL=qwen3.7-plus
+uv run memhall gateway --host 0.0.0.0    # 监听 8311；模型一律网关说了算
+# 智能体侧只需两个变量（.env），dummy key 自动按 memhall-<适配器> 派生：
+export GATEWAY_URL=http://127.0.0.1:8311/v1          # 本机智能体
+export GATEWAY_VM_URL=http://192.168.61.1:8311/v1    # VM 内智能体（hermes/kylinbot）
+uv run memhall run -a hermes -c cases/full           # 流量过网关，逐请求记账
+uv run memhall gateway --report                      # 按智能体出 token 账单
+# claude-local 走 anthropic 协议不进统一车道（配了 GATEWAY_URL 会显式报错）；
+
 # 双 LLM judge 判卷（可选，替代默认的离线脚本判卷；两 judge 需跨厂商）
 export JUDGE_A_BASE_URL=... JUDGE_A_MODEL=... JUDGE_A_KEY=...
 export JUDGE_B_BASE_URL=... JUDGE_B_MODEL=... JUDGE_B_KEY=...

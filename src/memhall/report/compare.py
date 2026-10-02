@@ -75,9 +75,23 @@ def compare_runs(dir_a: Path, dir_b: Path, out_dir: Path) -> dict:
     else:
         lines.append("两次运行判定完全一致（稳定性满分）。")
     lines.append("")
+    # 统一模型对账：两次运行的 model_backend 不一致时，能力差不能全归因于智能体
+    pa, pb = ma.get("model_backend"), mb.get("model_backend")
+    parity = None
+    if pa and pb:
+        same = (pa.get("mode") == pb.get("mode")
+                and pa.get("model") == pb.get("model"))
+        parity = {"same": same, "a": pa, "b": pb}
+        if not same:
+            lines.insert(2, f"> ⚠️ 模型口径不一致：{la} 用 `{pa.get('model')}`"
+                            f"（{pa.get('mode')}），{lb} 用 `{pb.get('model')}`"
+                            f"（{pb.get('mode')}）——能力差含模型因素，"
+                            "用统一模型网关（memhall gateway）后重跑。")
+            lines.insert(3, "")
     (out_dir / "compare.md").write_text("\n".join(lines), encoding="utf-8")
 
     return {"label_a": la, "label_b": lb, "n_common": len(common),
             "n_flips": len(flips), "overall_a": da, "overall_b": db,
+            "model_parity": parity,
             "radar": str(out_dir / "compare-radar.png"),
             "report": str(out_dir / "compare.md")}

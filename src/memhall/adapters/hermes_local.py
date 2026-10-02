@@ -66,8 +66,12 @@ class LocalHermesAdapter(AgentAdapter):
         return self._exe
 
     def _sandbox_env(self) -> dict:
-        base = os.environ.get("AGENT_LLM_BASE_URL", "").rstrip("/")
-        key = os.environ.get("AGENT_LLM_KEY", "")
+        # 统一模型模式（GATEWAY_URL）优先：走本地网关，真凭据只在网关进程
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("hermes-local")
+        base = (gw["base_url"] if gw
+                else os.environ.get("AGENT_LLM_BASE_URL", "")).rstrip("/")
+        key = gw["key"] if gw else os.environ.get("AGENT_LLM_KEY", "")
         if not (base and key):
             raise AgentUnavailable("缺 AGENT_LLM_BASE_URL / AGENT_LLM_KEY（检查 .env）")
         env = os.environ.copy()
@@ -86,7 +90,10 @@ class LocalHermesAdapter(AgentAdapter):
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("hermes-local")
+        model = (gw["model"] if gw
+                 else os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus"))
         sent = datetime.now(UTC)
         t0 = time.time()
         try:

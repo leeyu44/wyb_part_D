@@ -31,6 +31,9 @@ from memhall.schema.evidence import (
 )
 
 BRAIN_DB = "~/.kylinbot/workspace/memory/brain.db"
+CONFIG_TOML = "~/.kylinbot/config.toml"
+CONFIG_BAK = "~/.kylinbot/config.toml.bak-memhall"
+DIRECT_PROVIDER = "custom:https://api.mazhuoran.cloud/v1"
 
 # 用例注入的虚构工作区（评测专用 VM，reset 一并清掉防跨轮污染）
 EVAL_WORKDIRS = ["~/dev", "~/work", "~/proj", "~/docs", "~/notes",
@@ -73,7 +76,37 @@ class KylinBotAdapter(AgentAdapter):
         self.ch = channel or SshChannel()
         self._clock_epoch: int | None = None
 
+    def _apply_model_lane(self) -> None:
+        """统一模型模式：custom provider 改指宿主网关（首次备份，直连模式自动还原）。
+
+        config.toml 的 provider 编码在表名里（[providers.models."custom:<url>"]，
+        wire_api=chat_completions）——sed 换表名 + 表内 api_key 换 dummy
+        （入站 Bearer 兼作网关记账的身份标记）。model 字段不动：网关侧强制改写。
+        """
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("kylinbot", vm_lane=True)
+        rc, cur, _ = self.ch.run(f"grep -o 'custom:[^\"]*' {CONFIG_TOML} | head -1")
+        current = cur.strip()
+        if gw:
+            want = f"custom:{gw['base_url']}"
+            if current == want:
+                return
+            if not current.startswith("custom:"):
+                raise RuntimeError(f"config.toml provider 形态意外: {current[:80]}")
+            # 首次改写前备份（含直连真 key），供直连模式还原
+            self.ch.run(f"[ -f {CONFIG_BAK} ] || cp {CONFIG_TOML} {CONFIG_BAK}")
+            rc, _, err = self.ch.run(
+                f'sed -i "s|{current}|{want}|" {CONFIG_TOML} && '
+                f"sed -i '/providers\\.models\\.\"custom:/,/^$/ "
+                f"s|^api_key = .*|api_key = \"{gw['key']}\"|' {CONFIG_TOML}")
+            if rc != 0:
+                raise RuntimeError(f"config.toml 改指网关失败: {err.strip()[:200]}")
+        elif current != DIRECT_PROVIDER and "8311" in current:
+            # 上轮统一模式残留：还原直连配置
+            self.ch.run(f"[ -f {CONFIG_BAK} ] && cp {CONFIG_BAK} {CONFIG_TOML}")
+
     def reset(self) -> None:
+        self._apply_model_lane()
         rc, out, err = self.ch.run(
             "kylin-bot memory clear --yes 2>&1 | grep -E 'Cleared|Found' "
             f"; rm -rf {' '.join(EVAL_WORKDIRS)}"
@@ -138,18 +171,14 @@ class KylinBotAdapter(AgentAdapter):
         if rc != 0:
             raise RuntimeError("拨钟前读取系统时间失败")
         self._clock_epoch = int(out.strip())
-        rc, _, err = self.ch.run(
-            f"echo '{self.ch.password}' | sudo -S date -s '+{days} days' "
-            f">/dev/null 2>&1 && echo ok")
+        rc, _, err = self.ch.sudo(f"date -s '+{days} days' >/dev/null 2>&1 && echo ok")
         if rc != 0:
             raise RuntimeError(f"拨钟失败: {err.strip()[:200]}")
 
     def clock_restore(self) -> None:
         if self._clock_epoch is None:
             return
-        self.ch.run(
-            f"echo '{self.ch.password}' | sudo -S date -s @{self._clock_epoch} "
-            f">/dev/null 2>&1 && echo ok")
+        self.ch.sudo(f"date -s @{self._clock_epoch} >/dev/null 2>&1 && echo ok")
         self._clock_epoch = None
 
     def fs_snapshot(self) -> list[str] | None:

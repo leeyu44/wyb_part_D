@@ -13,6 +13,8 @@
 > 原 P1 记录：judge 判卷换 httpx（单题总预算 JUDGE_TOTAL_BUDGET=300s 兜底，替代 12 分钟级阻塞）；判卷离线自检进 CI（ScriptedJudge × 金标准错判零容忍——实现过程中顺带修掉两个真实宽松缺陷：①新旧并列回答被单侧子串命中误判 ②同模板异值回答被锚例 0.8 重叠误配，均改为转人工）；`_answer_for` 精确匹配优先；凭据全走 stdin/base64（hermes 的 API key、sudo 密码不再落 VM 命令行）；SSH 主机密钥 TOFU 钉扎（~/.memhall/known_hosts，指纹变化拒连）；实验室 IP 移出发行默认值（.env.example/remote/discovery，vm_* 运维工具保留可覆盖的私有默认）。mock 基线仍为 62.2%（六维逐项一致），83 测试全绿。
 >
 > **T17-T20 工程基建同日完成（2026-10-02）**：logging 全链路（`memhall.logs`，CLI `-v/--verbose`；runner 逐 case/耗时、SSH 命令/耗时、判卷重试/预算耗尽；窗口 exe 的 memhall.log 接同一套）；ruff+mypy 进 CI（新 lint job，规则集 E/F/W/I/B/UP/SIM/RET；存量 127 条一次清零——顺手修了 zip 无 strict、两个变量遮蔽、test_opencode 的裸 Exception 断言，mypy 拧出 judge._client 无类型标注等 14 处）；manifest 记 tool_version+python（--version 已在 T01 做）；dotenv 收敛 `memhall.env` 单源（值含 " #" 截断修复，引号包裹可保真；UI/CLI 两份手搓解析删除）。mock 基线仍逐字不变（62.2%/71.4%），86 测试全绿。
+>
+> **主线·统一模型对照机制化落地（2026-10-02，本清单外主线任务）**：`memhall gateway`（src/memhall/gateway.py，自研薄层 ~250 行，零新依赖——cc-switch 是 GUI 配置改写器、LiteLLM 对离线 deb 太重，调研后弃用）；model 强制改写 + 凭据单点（dummy key `memhall-<agent>` 兼作记账归因）+ 逐请求 token 记账（`--report` 出账单）；六适配器接入（hermes×2/opencode/qwen-local 走 GATEWAY_URL，kylinbot config.toml 自动改指+备份走 GATEWAY_VM_URL，claude-local anthropic 协议显式拒绝）；manifest 记 model_backend + compare 口径不一致告警；上游 TLS 断流重试。**实跑验证三车道全通**（hermes VM 100%、hermes-local 100%、kylinbot 100% 单用例；账单 hermes 91k/hermes-local 63k/kylinbot 137k tokens 全 0 错误）。顺手修真 bug：hermes send 的 stdin 两段式在管道上丢数据（head 吞读）+ env 文件裸赋值不 export——T10 改造引入、VM 实跑逮到，重写为 cat 落盘再拆行；kylinbot 拨钟密码内联（T10 漏网）。
 
 ---
 

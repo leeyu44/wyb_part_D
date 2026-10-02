@@ -67,6 +67,12 @@ class LocalClaudeAdapter(AgentAdapter):
 
     def _sandbox_env(self) -> dict:
         env = os.environ.copy()
+        from memhall.gateway import gateway_settings
+        if gateway_settings("claude-local"):
+            # 显式拒绝而非静默绕过：统一对照的车道里混进不同后端 = 口径污染
+            raise AgentUnavailable(
+                "统一模型网关 v1 仅 OpenAI 协议面，claude-local 走 anthropic 协议"
+                "进不来——它不参与本轮统一对照，请unset GATEWAY_URL 或另行评测")
         base = os.environ.get("CLAUDE_LLM_BASE_URL", "").rstrip("/")
         key = os.environ.get("CLAUDE_LLM_KEY", "")
         if base and key:

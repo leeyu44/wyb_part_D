@@ -41,15 +41,25 @@ class HermesAdapter(AgentAdapter):
         self.ch = channel or SshChannel()
         self._log_offset = 0
         self._clock_epoch: int | None = None
-        self._key = os.environ.get("AGENT_LLM_KEY", "")
-        self._url = os.environ.get("AGENT_LLM_BASE_URL", "")
-        self._model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
+        # 统一模型模式（GATEWAY_VM_URL，VM 走宿主网关的明文 http 腿）优先：
+        # 网关改写 model、真凭据只在网关侧
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("hermes", vm_lane=True) or {}
+        self._key = gw.get("key") or os.environ.get("AGENT_LLM_KEY", "")
+        self._url = gw.get("base_url") or os.environ.get("AGENT_LLM_BASE_URL", "")
+        self._model = gw.get("model") or os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
 
     def _llm_env_lines(self) -> str:
-        """网关凭据的 env 文件内容（send 走 stdin；systest 离线脚本 source 用）。"""
-        return (f"DEEPSEEK_API_KEY={self._key}\n"
-                f"DEEPSEEK_BASE_URL={self._url}\n"
-                f"DEEPSEEK_MODEL={self._model}\n")
+        """网关凭据的 env 文件内容（send 走 stdin；systest 离线脚本 source 用）。
+
+        必须 export——`. file` source 裸赋值只设 shell 局部变量，hermes 子进程
+        看不到（2026-10-02 VM 实跑逮到的坑）。值加单引号防空白/特殊字符劈碎。
+        """
+        def _q(v: str) -> str:
+            return "'" + v.replace("'", "'\\''") + "'"
+        return (f"export DEEPSEEK_API_KEY={_q(self._key)}\n"
+                f"export DEEPSEEK_BASE_URL={_q(self._url)}\n"
+                f"export DEEPSEEK_MODEL={_q(self._model)}\n")
 
     def reset(self) -> None:
         rc, _, err = self.ch.run(
@@ -64,12 +74,18 @@ class HermesAdapter(AgentAdapter):
     def send(self, session_id: str, message: str) -> Reply:
         # 凭据与消息都走 stdin（base64），命令行零明文：VM 内 ps/history
         # 不可见，值含引号/特殊字符也不会把命令拼碎。
-        # stdin 两段：第 1 行=网关 env 文件（落临时文件 600 后即删），其余=消息。
+        # stdin 先 cat 成临时文件再按行拆（管道上 head/tail 直接分段会丢数据——
+        # head 无法回退 seek，超读部分即吞掉，VM 实跑逮到 query 为空）。
+        # env 文件 600 权限即删；hermes 从消息文件读，不再用 stdin。
         script = (
-            'd=$(mktemp -t mh-env.XXXXXX) && '
-            'head -n1 | base64 -d > "$d" && chmod 600 "$d" && . "$d" && rm -f "$d" && '
-            f'tail -n +2 | base64 -d | timeout 280 {HERMES_BIN} chat --query-file - '
-            '--oneshot --provider deepseek --model "$DEEPSEEK_MODEL" 2>/dev/null')
+            'd=$(mktemp -t mh-stdin.XXXXXX) && cat > "$d" && '
+            'e=$(mktemp -t mh-env.XXXXXX) && head -n1 "$d" | base64 -d > "$e" '
+            '&& chmod 600 "$e" && . "$e" && rm -f "$e" && '
+            'm=$(mktemp -t mh-msg.XXXXXX) && tail -n +2 "$d" | base64 -d > "$m" '
+            '&& rm -f "$d" && '
+            f'timeout 280 {HERMES_BIN} chat --query-file "$m" '
+            '--oneshot --provider deepseek --model "$DEEPSEEK_MODEL" 2>/dev/null; '
+            'rm -f "$m"')
         sent = now_utc()
         t0 = time.time()
         rc, out, _ = self.ch.run(script, timeout=300,

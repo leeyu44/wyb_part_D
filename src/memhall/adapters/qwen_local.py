@@ -70,12 +70,23 @@ class LocalQwenAdapter(AgentAdapter):
                 f"qwen 未配置：{src} 不存在（先跑一次 qwen 完成网关配置）")
         data = json.loads(src.read_text(encoding="utf-8"))
         data.pop("hooks", None)  # clawd-on-desk 钩子不进评测沙箱
-        model = os.environ.get("AGENT_LLM_MODEL", "")  # 与 hermes/kylinbot 同一网关口径
+        # 统一模型模式（GATEWAY_URL）：provider baseUrl 改指网关，envKey 由沙箱
+        # env 注入 dummy key——流量必经网关，真凭据只在网关进程
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("qwen-local")
+        model = (gw["model"] if gw
+                 else os.environ.get("AGENT_LLM_MODEL", ""))  # 与 hermes/kylinbot 同一网关口径
         if model:
             data.setdefault("model", {})["name"] = model
-            for provs in data.get("modelProviders", {}).values():
-                for prov in provs:
+        self._gw_env: dict[str, str] = {}
+        for provs in data.get("modelProviders", {}).values():
+            for prov in (provs if isinstance(provs, list) else [provs]):
+                if model:
                     prov["id"] = model
+                if gw and prov.get("baseUrl") is not None:
+                    prov["baseUrl"] = gw["base_url"]
+                if gw and prov.get("envKey"):
+                    self._gw_env[prov["envKey"]] = gw["key"]
         shutil.rmtree(self.root, ignore_errors=True)
         self.qwen_home.mkdir(parents=True, exist_ok=True)
         (self.qwen_home / "settings.json").write_text(
@@ -85,6 +96,7 @@ class LocalQwenAdapter(AgentAdapter):
     def _sandbox_env(self) -> dict:
         env = os.environ.copy()
         env["QWEN_HOME"] = str(self.qwen_home)
+        env.update(getattr(self, "_gw_env", {}))
         return env
 
     # ---------- 契约 01 ----------

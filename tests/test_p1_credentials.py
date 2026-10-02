@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import shlex
 
 import memhall.adapters.remote as rm
 from memhall.adapters.hermes import HermesAdapter
@@ -43,7 +44,9 @@ def test_hermes_send_credentials_via_stdin_only(monkeypatch):
     stdin = next(s for k, _, s in fake.calls if k == "run")
     env_line, msg_line = stdin.split("\n")
     env = base64.b64decode(env_line).decode("utf-8")
-    assert "DEEPSEEK_API_KEY=sk-secret'with\"quotes" in env
+    # export + 单引号包裹（source 后必须导出给 hermes 子进程；shlex 验证转义可还原）
+    pair = next(t for t in shlex.split(env) if t.startswith("DEEPSEEK_API_KEY="))
+    assert pair == 'DEEPSEEK_API_KEY=sk-secret\'with"quotes'
     assert base64.b64decode(msg_line).decode("utf-8").startswith("记一下")
 
 
