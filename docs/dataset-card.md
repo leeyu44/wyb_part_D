@@ -69,6 +69,7 @@ reuse           |     1      |  1   |    1     |  1   |       1       |    1
 
 - 语言：仅中文；场景：桌面办公/开发场景，未覆盖多语言与专业领域
 - 生成扩量以团队 scripts/gen_cases.py 为准（gen=公开集 seed=20260928，heldout=不可见集 seed=4210，`--prefix h` 隔离 ID）；B 的 generators/generate_cases.py（pool，seed=42）为备用素材，未并入 PR
+- **三难度旋钮**（design §4.4，2026-10-02 参数化）：`--distract N` 干扰密度（confound 闲聊条数）、`--gap-days N` 拨钟间隔天数、`--similar high|mid|low` 诱饵相似度；同 seed 改旋钮 = 仅难度不同的对照变体；默认参数与历史存档逐字一致（核心闲聊池 5 条不动，扩展池仅在 N≥2 时并入）
 - **方差口径**：正式全量跑每智能体 ≥2 轮，报告六维与总分的 mean±std（样本标准差，`memhall aggregate runs/<id1> runs/<id2> ...`），单轮裸分数不作对外口径
 - 任务链的"步数/耗时对比"（记忆效率指标）需 runner 支持，probe 侧已预留 actions 计数断言
 - 难度标定数据量有限，结论标注"初步标定"

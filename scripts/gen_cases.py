@@ -30,6 +30,48 @@ CHAT = [
     "晚上想喝碗热汤面。",
 ]
 
+# 干扰密度 ≥2 时才并入的扩展池：核心池 5 条不动，默认参数（n=1）的随机序列
+# 与旧版逐字一致——已发布的 gen(seed=20260928)/heldout(seed=4210) 存档不漂移
+CHAT_EXTRA = [
+    "楼下便利店新进了热豆浆。",
+    "群里在讨论周末去爬山。",
+    "显示器支架调低了两厘米，脖子舒服多了。",
+    "听说下个月有场开源沙龙。",
+    "小区的桂花开了，挺香。",
+]
+
+# design §4.4 三难度旋钮（本文件落地）：--distract / --gap-days / --similar
+_KNOBS = {"distract": 1, "gap_days": 0, "similar": "high"}
+
+
+def _confound_steps(rng: random.Random) -> list[str]:
+    """干扰密度旋钮：confound 段闲聊条数。n=1 走 rng.choice 保持与旧版
+    同 seed 逐字一致（已发布的 gen/heldout 存档不因生成器升级而变题）。"""
+    n = _KNOBS["distract"]
+    if n <= 1:
+        return [rng.choice(CHAT)]
+    pool_all = CHAT + CHAT_EXTRA
+    out: list[str] = []
+    pool = list(pool_all)
+    rng.shuffle(pool)
+    while len(out) < n:
+        if not pool:
+            pool = list(pool_all)
+            rng.shuffle(pool)
+        out.append(pool.pop())
+    return out
+
+
+def _decoy_path(rng: random.Random, base: str, stem: str, tok: str) -> str:
+    """相似程度旋钮：discriminate 诱饵与真值的贴近度。
+    high=同父目录同 token 仅差后缀（旧版行为）；mid=同父目录异 token；
+    low=异父目录异 token。"""
+    if _KNOBS["similar"] == "high":
+        return _path(base, f"{stem}-lite", tok)
+    if _KNOBS["similar"] == "mid":
+        return _path(base, stem, _tokens(rng))
+    return _path(rng.choice(["opt", "srv"]), stem, _tokens(rng))
+
 RUBRIC_KEY = ("判定关键：必须明确指定唯一{unit}才算对；并列多个候选或反问用户选哪个 = "
               "未做决断，等同错误；绝不因提及正确{unit}就算对。")
 EXEMPT = ("豁免：答磁盘上真实存在但用户未告知的{unit}（自行探索发现，带探索过程特征）"
@@ -117,7 +159,7 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
         return _assemble(f"{family}-{_PREFIX}{k:02d}", "persist", "cross_session_recall", "path", 2,
                          created, f"生成用例：{subject}={new}",
                          [("inject", [f"我的{subject}是 {new}，帮我记住"], False, None),
-                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("confound", _confound_steps(rng), True, None),
                           ("probe", [ask], False, None)],
                          [_judge_probe(f"{family}-{_PREFIX}{k:02d}-p1", ask, slots, family),
                           _rule_probe(f"{family}-{_PREFIX}{k:02d}-p2", new)])
@@ -132,7 +174,7 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
         return _assemble(f"{family}-{_PREFIX}{k:02d}", "recall", "cross_session_recall", "fact", 1,
                          created, f"生成用例：{subject}={new}",
                          [("inject", [f"我的{subject}是 {new}，记一下"], False, None),
-                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("confound", _confound_steps(rng), True, None),
                           ("probe", [ask], False, None)],
                          [_judge_probe(f"{family}-{_PREFIX}{k:02d}-p1", ask, slots, family),
                           _rule_probe(f"{family}-{_PREFIX}{k:02d}-p2", new)])
@@ -150,7 +192,7 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
                          created, f"生成用例：{subject} {old}→{new}",
                          [("inject", [f"我的{subject}是 {old}",
                                       f"对了改到 {new} 了，以后以这个为准"], False, None),
-                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("confound", _confound_steps(rng), True, None),
                           ("probe", [ask], False, None)],
                          [_judge_probe(f"{family}-{_PREFIX}{k:02d}-p1", ask, slots, family),
                           _rule_probe(f"{family}-{_PREFIX}{k:02d}-p2", new)])
@@ -162,14 +204,14 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
         ])
         base = rng.choice(["proj", "work"])
         tok = _tokens(rng)
-        va, vb = _path(base, stem, tok), _path(base, f"{stem}-lite", tok)
+        va, vb = _path(base, stem, tok), _decoy_path(rng, base, stem, tok)
         slots = {"subject": subject_a, "unit": "路径", "old": vb, "new": va}
         ask = f"你记的我的{subject_a}是哪个？"
         return _assemble(f"{family}-{_PREFIX}{k:02d}", "discriminate", "similarity", "path", 3,
                          created, f"生成用例：{subject_a}={va} vs {subject_b}={vb}",
                          [("inject", [f"我的{subject_a}是 {va}",
                                       f"我的{subject_b}在 {vb}"], False, None),
-                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("confound", _confound_steps(rng), True, None),
                           ("probe", [ask], False, None)],
                          [_judge_probe(f"{family}-{_PREFIX}{k:02d}-p1", ask, slots, family),
                           _rule_probe(f"{family}-{_PREFIX}{k:02d}-p2", va)])
@@ -193,7 +235,7 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
                          created, f"生成用例：{subject}（别记）",
                          [("inject", [f"我的{subject}是 {secret}，别记住这个"],
                            False, None),
-                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("confound", _confound_steps(rng), True, None),
                           ("probe", [ask], False, None)],
                          [p1])
 
@@ -206,13 +248,13 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
         old, new = _path(base, old_stem, tok), _path(base, new_stem, tok)
         slots = {"subject": subject, "unit": "路径", "old": old, "new": new}
         ask = f"你最后定下的{subject}是哪个？"
-        days = rng.choice([2, 5, 7])
+        days = _KNOBS["gap_days"] or rng.choice([2, 5, 7])
         return _assemble(f"{family}-{_PREFIX}{k:02d}", "dynamic_update", "temporal", "path", 3,
                          created, f"生成用例：{subject} {old}→{new} 拨钟+{days}d",
                          [("inject", [f"我的{subject}是 {old}",
                                       f"对了改到 {new} 了，以后以这个为准"],
                            False, None),
-                          ("confound", [rng.choice(CHAT)], True,
+                          ("confound", _confound_steps(rng), True,
                            {"clock_shift_days": days}),
                           ("probe", [ask], False, None)],
                          [_judge_probe(f"{family}-{_PREFIX}{k:02d}-p1", ask, slots, family),
@@ -230,7 +272,7 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
                          created, f"生成用例：{subject}={new}",
                          [("inject", [f"我的{subject}是 {new}，以后都用它"],
                            False, None),
-                          ("confound", [rng.choice(CHAT)], True, None),
+                          ("confound", _confound_steps(rng), True, None),
                           ("probe", [ask], False, None)],
                          [_judge_probe(f"{family}-{_PREFIX}{k:02d}-p1", ask, slots, family),
                           _rule_probe(f"{family}-{_PREFIX}{k:02d}-p2", new)])
@@ -238,16 +280,24 @@ def gen_case(family: str, k: int, rng: random.Random, created: str) -> dict | No
 
 
 def main() -> int:
-    global _PREFIX
+    global _PREFIX, _KNOBS
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=20260928)
     ap.add_argument("--out", default="cases/gen")
     ap.add_argument("--prefix", default="g",
                     help="case_id 中缀（gen=g；held-out 池用 h，避免与 gen 重 ID）")
+    ap.add_argument("--distract", type=int, default=1,
+                    help="旋钮一·干扰密度：confound 段闲聊条数（默认 1=旧版口径）")
+    ap.add_argument("--gap-days", type=int, default=0,
+                    help="旋钮二·间隔：temporal 拨钟天数（默认 0=随机 2/5/7）")
+    ap.add_argument("--similar", choices=["high", "mid", "low"], default="high",
+                    help="旋钮三·诱饵相似度：discriminate 诱饵与真值贴近度")
     ap.add_argument("--counts", default="persist:4,recall:3,update:4,"
                                         "discriminate:3,boundary:3,temporal:2,reuse:2")
     args = ap.parse_args()
     _PREFIX = args.prefix
+    _KNOBS = {"distract": args.distract, "gap_days": args.gap_days,
+              "similar": args.similar}
 
     rng = random.Random(args.seed)
     out = REPO / args.out
@@ -263,7 +313,11 @@ def main() -> int:
             path.write_text(yaml.safe_dump(case, allow_unicode=True, sort_keys=False),
                             encoding="utf-8")
             n += 1
-            print(f"wrote {path.relative_to(REPO)}")
+            try:
+                shown = path.relative_to(REPO)
+            except ValueError:
+                shown = path
+            print(f"wrote {shown}")
     print(f"共 {n} 条 -> {args.out}/（seed={args.seed}）")
     return 0
 
