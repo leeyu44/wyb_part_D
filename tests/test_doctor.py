@@ -7,7 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import pytest
 
 from memhall.discovery import (
     DoctorReport,
@@ -44,6 +43,7 @@ def test_check_env_degrades(monkeypatch):
 def test_which_prefers_pathext_over_shim(monkeypatch, tmp_path):
     """Windows 下无扩展 bash shim 不得蹭掉真身 .cmd/.exe（clawd 探测方案对齐）。"""
     import os
+
     import memhall.discovery as disc
     for n in ("claude", "claude.cmd"):
         f = tmp_path / n

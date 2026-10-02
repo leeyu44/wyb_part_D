@@ -218,10 +218,10 @@ def _which(name: str) -> str:
             except OSError:
                 continue
         _path_idx = idx
-    ext = _path_idx.get(name.lower())
-    if ext is None:
+    hit = _path_idx.get(name.lower())
+    if hit is None:
         return ""
-    return name + ext
+    return name + hit
 
 
 def _activity_days(cfgs: list[str]) -> int | None:
@@ -302,7 +302,7 @@ def scan_local(timeout_s: int = 4, fresh: bool = False) -> list[Finding]:
     if hits:
         with ThreadPoolExecutor(max_workers=8) as ex:
             versions = list(ex.map(_ver, [h[1] for h in hits]))
-        for (f, _), ver in zip(hits, versions):
+        for (f, _), ver in zip(hits, versions, strict=True):
             f.version = ver
             out.append(f)
         cache["versions"] = versions_cache
@@ -367,8 +367,8 @@ def scan_vm() -> tuple[list[Finding], str]:
             adapter = next((a for n, _, a in VM_AGENTS if n == name), "")
             findings[name] = Finding(name, "vm", True, version.strip(),
                                      detail=path.strip(), adapter=adapter)
-    extra = [l for l in out.splitlines()
-             if l.strip().startswith(("/", "~"))]
+    extra = [ln for ln in out.splitlines()
+             if ln.strip().startswith(("/", "~"))]
     if "brain.db" in "\n".join(extra):
         f = findings.setdefault("kylin-bot", Finding("kylin-bot", "vm", True,
                                                      adapter="kylinbot"))

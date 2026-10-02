@@ -6,21 +6,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 import yaml
-from pathlib import Path
 
 from memhall.adapters.mock import MockAdapter
 from memhall.schema.evidence import (
-    ActionDump,
-    ActionSource,
     Evidence,
     EvidencePhase,
     EvidenceType,
-    MemorySnapshot,
     Reply,
-    VerdictValue,
 )
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.rules import EvidenceStore, run_check
@@ -29,7 +25,7 @@ CASES = Path(__file__).parent.parent / "cases" / "full"
 
 
 def _utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def load_case(case_id: str) -> MemoryCase:

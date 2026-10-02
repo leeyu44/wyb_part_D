@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
 
 # ---------- 枚举 ----------
 
@@ -51,8 +50,8 @@ class DecidedBy(str, Enum):
 # ---------- 对话（契约 03 §2.1 Reply）----------
 
 class TokenUsage(BaseModel):
-    prompt: Optional[int] = None
-    completion: Optional[int] = None
+    prompt: int | None = None
+    completion: int | None = None
 
 
 class Reply(BaseModel):
@@ -63,7 +62,7 @@ class Reply(BaseModel):
     sent_at: datetime
     reply_at: datetime
     latency_ms: int
-    token_usage: Optional[TokenUsage] = None
+    token_usage: TokenUsage | None = None
 
 
 # ---------- 记忆快照（契约 03 §2.2 MemorySnapshot）----------
@@ -71,8 +70,8 @@ class Reply(BaseModel):
 class MemoryEntry(BaseModel):
     entry_id: str
     content: str
-    created_at: Optional[datetime] = None   # 智能体侧时间戳（写入时机测试用）
-    source_turn: Optional[str] = None       # 能对上哪句对话就填
+    created_at: datetime | None = None   # 智能体侧时间戳（写入时机测试用）
+    source_turn: str | None = None       # 能对上哪句对话就填
 
 
 class MemoryRaw(BaseModel):
@@ -84,7 +83,7 @@ class MemorySnapshot(BaseModel):
     format: Literal["sqlite", "json", "files", "none"]
     dumped_at: datetime
     entries: list[MemoryEntry] = Field(default_factory=list)
-    raw: Optional[MemoryRaw] = None
+    raw: MemoryRaw | None = None
 
 
 # ---------- 操作记录（契约 03 §2.3 Action）----------
@@ -100,7 +99,7 @@ class Action(BaseModel):
     ts: datetime
     tool: str                    # MCP 工具名或智能体日志里的调用名
     args: dict[str, Any] = Field(default_factory=dict)
-    result: Optional[str] = None
+    result: str | None = None
     source: ActionSource
 
 
@@ -162,10 +161,10 @@ class JudgeMetaItem(BaseModel):
 
 
 class JudgeMeta(BaseModel):
-    judge_a: Optional[JudgeMetaItem] = None
-    judge_b: Optional[JudgeMetaItem] = None
+    judge_a: JudgeMetaItem | None = None
+    judge_b: JudgeMetaItem | None = None
     prompt_version: str = ""
-    arbiter: Optional[str] = None   # 双判不一致时：rule | 第三模型 | None(转人工)
+    arbiter: str | None = None   # 双判不一致时：rule | 第三模型 | None(转人工)
 
 
 class Verdict(BaseModel):
@@ -178,4 +177,4 @@ class Verdict(BaseModel):
     decided_by: DecidedBy
     evidence_refs: list[str] = Field(default_factory=list)   # 报告下钻入口
     explanation: str = ""
-    judge_meta: Optional[JudgeMeta] = None
+    judge_meta: JudgeMeta | None = None

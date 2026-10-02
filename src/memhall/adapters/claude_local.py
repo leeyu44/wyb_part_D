@@ -21,10 +21,10 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW
+from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
 _SEND_MIN_INTERVAL = float(os.environ.get("CLAUDE_SEND_INTERVAL", "2"))
@@ -59,7 +59,9 @@ class LocalClaudeAdapter(AgentAdapter):
             from memhall.discovery import ADAPTER_CLI, find_cli
             exe = find_cli(*ADAPTER_CLI["claude"])
             if not exe:
-                raise AgentUnavailable("PATH 与 ~/.local/bin 均找不到 claude（npm i -g @anthropic-ai/claude-code）")
+                raise AgentUnavailable(
+                    "PATH 与 ~/.local/bin 均找不到 claude"
+                    "（npm i -g @anthropic-ai/claude-code）")
             self._exe = exe
         return self._exe
 
@@ -92,7 +94,7 @@ class LocalClaudeAdapter(AgentAdapter):
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        sent = datetime.now(timezone.utc)
+        sent = datetime.now(UTC)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -108,7 +110,7 @@ class LocalClaudeAdapter(AgentAdapter):
             raise AgentUnavailable(
                 f"claude 无有效回复(rc={r.returncode}): {text[:150]} | {(r.stderr or '')[:150]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(timezone.utc),
+                     reply_at=datetime.now(UTC),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
@@ -139,7 +141,7 @@ class LocalClaudeAdapter(AgentAdapter):
                     entry_id=f"m-{len(entries):04d}", content=s,
                     created_at=None, source_turn=rel))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(timezone.utc),
+                              dumped_at=datetime.now(UTC),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:

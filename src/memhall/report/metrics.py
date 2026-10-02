@@ -11,7 +11,7 @@ CAP_ORDER = [
     Capability.PERSIST, Capability.RECALL, Capability.DYNAMIC_UPDATE,
     Capability.DISCRIMINATE, Capability.BOUNDARY, Capability.REUSE,
 ]
-CAP_LABELS_ZH = {
+CAP_LABELS_ZH: dict[str, str] = {
     Capability.PERSIST: "长期保持",
     Capability.RECALL: "记忆调用",
     Capability.DYNAMIC_UPDATE: "动态更新",
@@ -80,9 +80,9 @@ def compute_metrics(verdicts: list[Verdict], cases: dict[str, MemoryCase]) -> di
 
 def _agreement_rate(verdicts: list[Verdict]) -> float | None:
     """双判一致率：双评委原始票相同的比例（无 judge_meta/无双判时 None）。"""
-    dual = [v for v in verdicts
-            if v.judge_meta and v.judge_meta.judge_b is not None]
-    if not dual:
+    dual = [v.judge_meta for v in verdicts if v.judge_meta is not None]
+    bs = [m.judge_b for m in dual if m.judge_b is not None]
+    if not bs:
         return None
-    agreed = sum(1 for v in dual if v.judge_meta.judge_b.agreed)
-    return round(agreed / len(dual), 4)
+    agreed = sum(1 for b in bs if b.agreed)
+    return round(agreed / len(bs), 4)

@@ -69,7 +69,7 @@ def format_table(result: dict) -> str:
     lines = [f"{result['adapter']} × {result['cases']}　{result['n_runs']} 轮",
              f"总分：{result['overall']['mean']:.1%} ± {result['overall']['std']:.1%}",
              "维度｜均值±标准差（min~max）"]
-    for cap, c in result["capabilities"].items():
+    for c in result["capabilities"].values():
         lines.append(f"  {c['label_zh']}：{c['mean']:.1%} ± {c['std']:.1%}"
                      f"（{c['min']:.0%}~{c['max']:.0%}，n={c['n']}）")
     return "\n".join(lines)

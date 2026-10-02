@@ -96,7 +96,7 @@ def test_remote_sudo_password_via_stdin(tmp_path, monkeypatch):
     ch = rm.SshChannel(host="h", user="u", password="p@ss'w0rd")
     rc, out, _ = ch.sudo("date -s @123")
     assert rc == 0
-    assert "sudo -S -p '' -- date -s @123" == seen["cmd"]
+    assert seen["cmd"] == "sudo -S -p '' -- date -s @123"
     assert "p@ss" not in seen["cmd"]
     assert "".join(seen["stdin"]) == "p@ss'w0rd\n"  # 密码只走 stdin
 

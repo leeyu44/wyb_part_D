@@ -33,6 +33,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
+from memhall.env import load_dotenv
 from memhall.paths import QUICK_IDS, case_roots, repo_root
 
 REPO_ROOT = repo_root()
@@ -171,7 +172,6 @@ def create_app() -> FastAPI:
     def adapter_status() -> dict:
         """跑页下拉框的真实可跑性：与适配器同款 find_cli 探测（PATH+已知安装位），
         不装不骗人。mock 内置恒可用；VM 型取决于 VM_HOST 通道配置。"""
-        import shutil
         from memhall.discovery import ADAPTER_CLI, find_cli
         vm = bool(os.environ.get("VM_HOST"))
         return {
@@ -185,7 +185,6 @@ def create_app() -> FastAPI:
 
     @app.get("/api/meta")
     def meta() -> dict:
-        import sys
         from importlib.metadata import PackageNotFoundError, version
         try:
             v = version("memhall")
@@ -209,7 +208,8 @@ def create_app() -> FastAPI:
                  "label": CASE_SET_DESC["quick"].format(n=len(QUICK_IDS))}]
         sets += [
             {"id": f"cases/{name}",
-             "label": CASE_SET_DESC.get(name, "{name} · {n} 题").format(n=len(list(d.glob("*.y*ml"))), name=name)}
+             "label": CASE_SET_DESC.get(name, "{name} · {n} 题")
+                      .format(n=len(list(d.glob("*.y*ml"))), name=name)}
             for name, d in sorted(found.items(), key=lambda kv: (order.get(kv[0], 99), kv[0]))
         ]
         return {"sets": sets if found else [{"id": "cases/full", "label": "种子题库（默认）"}]}
@@ -262,7 +262,7 @@ def create_app() -> FastAPI:
                                            on_event=emit)
                 emit({"type": "phase", "msg": "评测完成，开始判卷…"})
                 verdicts = []
-                for case, store in zip(cases, stores):
+                for case, store in zip(cases, stores, strict=True):
                     verdicts.extend(evaluate_case(case, store, run_id, judges))
                     if session.stop:
                         break
@@ -428,7 +428,7 @@ def create_app() -> FastAPI:
     # ---------- 配置 ----------
     @app.get("/api/config")
     def get_config() -> dict:
-        _load_env_file()
+        load_dotenv()
         items = []
         for k in KNOWN_KEYS:
             v = os.environ.get(k, "")
@@ -464,18 +464,3 @@ def create_app() -> FastAPI:
         return {"ok": True, "saved": len(updates)}
 
     return app
-
-
-def _load_env_file() -> None:
-    """把 .env 装进 os.environ（已存在的环境变量优先，不覆盖）。"""
-    if not ENV_PATH.exists():
-        return
-    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.split(" #")[0].strip()
-        if k and k not in os.environ:
-            os.environ[k] = v

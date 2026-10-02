@@ -19,10 +19,10 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW
+from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
 from memhall.adapters.hermes import _strip_tui
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
@@ -87,7 +87,7 @@ class LocalHermesAdapter(AgentAdapter):
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
         model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
-        sent = datetime.now(timezone.utc)
+        sent = datetime.now(UTC)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -107,7 +107,7 @@ class LocalHermesAdapter(AgentAdapter):
         if "API failed after" in text or "Final error" in text:
             raise AgentUnavailable(f"hermes 后端不可用: {text[:200]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(timezone.utc),
+                     reply_at=datetime.now(UTC),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
@@ -127,7 +127,7 @@ class LocalHermesAdapter(AgentAdapter):
                         entry_id=f"m-{len(entries):04d}", content=s,
                         created_at=None, source_turn=name))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(timezone.utc),
+                              dumped_at=datetime.now(UTC),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:

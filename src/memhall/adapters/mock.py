@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from memhall.adapters.base import AgentAdapter
 from memhall.schema.evidence import (
@@ -35,7 +35,7 @@ from memhall.schema.evidence import (
     Reply,
 )
 
-utc = lambda: datetime.now(timezone.utc)  # noqa: E731
+utc = lambda: datetime.now(UTC)  # noqa: E731
 
 # 设计缺陷模式表（机器可读；报告脚注/校准对账用）
 DESIGNED_PROFILE = {
@@ -62,7 +62,7 @@ def _tokens(text: str) -> set[str]:
     """特征 token：≥2 位字母数字串 + CJK 相邻二元组（停用词剔除）。"""
     out = {t for t in _ALNUM.findall(text) if not t.isdigit()}
     chars = _CJK.findall(text)
-    out |= {a + b for a, b in zip(chars, chars[1:])}
+    out |= {a + b for a, b in zip(chars, chars[1:], strict=False)}
     return out - _STOP
 
 

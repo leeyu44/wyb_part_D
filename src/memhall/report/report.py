@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from memhall.report.metrics import CAP_LABELS_ZH, CAP_ORDER, compute_metrics
+from memhall.report.metrics import CAP_LABELS_ZH, CAP_ORDER
 from memhall.schema.evidence import Verdict
 from memhall.schema.models_case import MemoryCase
 
@@ -56,11 +55,11 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
     lines.append("| 探测点 | 能力 | 判定 | 判卷 | 置信 | 说明 |")
     lines.append("|---|---|---|---|---|---|")
     for v in sorted(verdicts, key=lambda x: x.probe_id):
-        cap = cases[v.case_id].capability.value if v.case_id in cases else "?"
+        cap_id = cases[v.case_id].capability.value if v.case_id in cases else "?"
         reason = v.explanation.replace("|", "\\|")
         if len(reason) > 60:
             reason = reason[:60] + "…"
-        lines.append(f"| {v.probe_id} | {cap} | {VERDICT_ZH.get(v.verdict.value, v.verdict.value)} "
+        lines.append(f"| {v.probe_id} | {cap_id} | {VERDICT_ZH.get(v.verdict.value, v.verdict.value)} "
                      f"| {v.decided_by.value} | {v.confidence:.2f} | {reason} |")
     lines.append("")
     lines.append(f"> 证据下钻：`runs/{run_id}/cases/<case_id>/evidence.jsonl`"
@@ -71,7 +70,7 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
         lines.append("---")
         lines.append("**mock 为缺陷注入基线**：分数是下列设计模式的确定输出，"
                      "用作管线回归与判卷自检，不是难度地板。")
-        for cap, mode in DESIGNED_PROFILE.items():
-            lines.append(f"- {cap}: {mode}")
+        for pkey, mode in DESIGNED_PROFILE.items():
+            lines.append(f"- {pkey}: {mode}")
         lines.append("")
     return "\n".join(lines)

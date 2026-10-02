@@ -21,10 +21,10 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW
+from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
 from memhall.schema.evidence import (
     ActionDump,
     MemoryEntry,
@@ -106,7 +106,7 @@ class OpenCodeAdapter(AgentAdapter):
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        sent = datetime.now(timezone.utc)
+        sent = datetime.now(UTC)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -122,7 +122,7 @@ class OpenCodeAdapter(AgentAdapter):
                 f"opencode 无有效回复(rc={r.returncode}): "
                 f"{(r.stdout or '')[:150]} | {(r.stderr or '')[:150]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(timezone.utc),
+                     reply_at=datetime.now(UTC),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
@@ -133,7 +133,7 @@ class OpenCodeAdapter(AgentAdapter):
         entries: list[MemoryEntry] = []
         agents_md = self.workspace / "AGENTS.md"
         if agents_md.exists():
-            mtime = datetime.fromtimestamp(agents_md.stat().st_mtime, timezone.utc)
+            mtime = datetime.fromtimestamp(agents_md.stat().st_mtime, UTC)
             entries.append(MemoryEntry(
                 entry_id="agents-md",
                 content=agents_md.read_text(encoding="utf-8", errors="replace")[:2000],
@@ -148,10 +148,10 @@ class OpenCodeAdapter(AgentAdapter):
                     content=f"[{rel}] "
                             + p.read_text(encoding="utf-8", errors="replace")[:500],
                     created_at=datetime.fromtimestamp(
-                        p.stat().st_mtime, timezone.utc),
+                        p.stat().st_mtime, UTC),
                     source_turn=str(rel)))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(timezone.utc),
+                              dumped_at=datetime.now(UTC),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:

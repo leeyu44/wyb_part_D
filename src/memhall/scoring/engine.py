@@ -6,8 +6,6 @@ JudgeProbe -> 判卷器（scripted 离线 / 双 LLM judge 在线，scoring/judge
 
 from __future__ import annotations
 
-from typing import Optional
-
 from memhall.schema.evidence import (
     DecidedBy,
     EvidenceType,
@@ -37,7 +35,8 @@ def _answer_for(store: EvidenceStore, ask: str) -> str:
     for ev in store.by_type(EvidenceType.DIALOGUE):
         msgs = ev.payload.get("messages", [])
         replies = ev.payload.get("replies", [])
-        for msg, rep in zip(msgs, replies):
+        # strict=False：回放的是历史 run 落盘数据，容错旧证据长度漂移
+        for msg, rep in zip(msgs, replies, strict=False):
             if msg.strip() == ask.strip():
                 exact = rep.get("text", "")
             elif _norm_pair(msg, ask):
@@ -58,7 +57,7 @@ def _raw_verdict(key: str | None, probe: JudgeProbe) -> VerdictValue:
 
 
 def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: int,
-                   judges: Optional[tuple[OpenAICompatJudge, ...]]) -> Verdict:
+                   judges: tuple[OpenAICompatJudge, ...] | None) -> Verdict:
     answer = _answer_for(store, probe.ask)
     if "[RUNTIME_ERROR]" in answer:
         return Verdict(
@@ -151,7 +150,7 @@ def _rule_verdict(probe: RuleProbe, store: EvidenceStore, run_id: str, seq: int)
 
 
 def evaluate_case(case: MemoryCase, store: EvidenceStore, run_id: str,
-                  judges: Optional[tuple[OpenAICompatJudge, ...]] = None
+                  judges: tuple[OpenAICompatJudge, ...] | None = None
                   ) -> list[Verdict]:
     out: list[Verdict] = []
     for i, probe in enumerate(case.probes, start=1):

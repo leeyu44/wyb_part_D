@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
@@ -66,13 +67,12 @@ class SystemTester:
         if not taught:
             r.passed, r.detail = False, "教学阶段就没写入记忆，无法测重启"
             return r
-        try:
+        with contextlib.suppress(Exception):  # 连接随重启断开，属预期
             self._sudo("shutdown -r now", timeout=8)
-        except Exception:
-            pass  # 连接随重启断开，属预期
         self.ch.close()
         up = self._wait_ssh(self.REBOOT_WAIT_S)
         if not up:
+
             r.passed, r.detail = False, f"{self.REBOOT_WAIT_S}s 内 SSH 未恢复"
             return r
         a2 = self._mk()
@@ -264,6 +264,7 @@ def render_systest_chart(results: list[TestResult], out_png: str,
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
     from memhall.report.radar import _setup_font
     _setup_font()
     names = [x.zh for x in results][::-1]

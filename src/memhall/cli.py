@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -17,12 +18,14 @@ import yaml
 from memhall import __version__
 from memhall.adapters import create_adapter
 from memhall.paths import QUICK_IDS, resolve_case_dir
+from memhall.report import compute_metrics, render_radar, render_report
 from memhall.runner.orchestrator import run_suite
+from memhall.schema.evidence import Verdict
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.engine import evaluate_case
 from memhall.scoring.judge import OpenAICompatJudge
-from memhall.report import compute_metrics, render_radar, render_report
-from memhall.schema.evidence import Verdict
+
+log = logging.getLogger(__name__)
 
 
 def load_cases(case_dir: Path) -> list[MemoryCase]:
@@ -109,7 +112,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
 
     verdicts = []
-    for case, store in zip(cases, stores):
+    for case, store in zip(cases, stores, strict=True):
         verdicts.extend(evaluate_case(case, store, run_id, judges))
     metrics = _finish_run(run_dir, run_id, manifest, verdicts,
                           {c.case_id: c for c in cases}, judge_mode=args.judge)
@@ -212,30 +215,12 @@ def _ensure_streams() -> None:
 
 def _utf8_console() -> None:
     """Windows 控制台默认 GBK 代码页，中文输出乱码——统一改 UTF-8。"""
+    import io
     for stream in (sys.stdout, sys.stderr):
-        if stream and stream.encoding and stream.encoding.lower() not in ("utf-8", "utf8"):
-            try:
-                stream.reconfigure(encoding="utf-8", errors="replace")
-            except AttributeError:
-                pass  # 非 TextIOWrapper（重定向到文件等）时不动
-
-
-def _load_dotenv() -> None:
-    """把 .env 装进进程环境（setdefault，手工 export 优先）。
-    候选：源码=仓库根 / 打包=exe 同级 / deb 装机=~/memhall.env。
-    所有 CLI 入口统一走这里——run/doctor 直跑也依赖 AGENT_LLM_* 等键。"""
-    candidates = ([Path(sys.executable).resolve().parent / ".env"]
-                  if getattr(sys, "frozen", False)
-                  else [Path(__file__).resolve().parents[2] / ".env"])
-    candidates.append(Path.home() / "memhall.env")  # deb 装机配置页的落点
-    for env_file in candidates:
-        if not env_file.exists():
-            continue
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
+        # 非 TextIOWrapper（重定向到文件等）时不动
+        if (isinstance(stream, io.TextIOWrapper)
+                and stream.encoding.lower() not in ("utf-8", "utf8")):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -363,16 +348,20 @@ def _open_app_window(url: str) -> None:
 def main() -> None:
     _ensure_streams()
     _utf8_console()
-    _load_dotenv()
+    from memhall.env import load_dotenv
+    from memhall.logs import setup_logging
     if len(sys.argv) == 1 and getattr(sys, "frozen", False):
         sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
     parser = argparse.ArgumentParser(prog="memhall",
                                      description="麟阁：智能体记忆能力评测基准")
     parser.add_argument("--version", action="version",
                         version=f"memhall {__version__}")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-v", "--verbose", action="store_true",
+                        help="调试日志（逐 case/步骤/SSH 命令）")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_run = sub.add_parser("run", help="跑一轮评测并出报告")
+    p_run = sub.add_parser("run", help="跑一轮评测并出报告", parents=[common])
     p_run.add_argument("-a", "--adapter", default="mock", help="适配器名（默认 mock）")
     p_run.add_argument("-c", "--cases", default="cases/full", help="用例目录")
     p_run.add_argument("-o", "--out", default="runs", help="输出根目录")
@@ -380,33 +369,39 @@ def main() -> None:
                        help="判卷方式（dual=LLM 判卷[单判或双判，按 JUDGE_B 是否配置]）")
     p_run.set_defaults(func=cmd_run)
 
-    p_rep = sub.add_parser("report", help="出报告（缺 verdicts 时从证据重放评分）")
+    p_rep = sub.add_parser("report", help="出报告（缺 verdicts 时从证据重放评分）",
+                           parents=[common])
     p_rep.add_argument("run_dir", help="runs/ 下的 run 目录")
     p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
                        help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
 
-    p_cmp = sub.add_parser("compare", help="对比两次运行：对比雷达 + 判定翻转明细")
+    p_cmp = sub.add_parser("compare", help="对比两次运行：对比雷达 + 判定翻转明细",
+                           parents=[common])
     p_cmp.add_argument("run_a", help="运行 A（runs/<run_id> 或完整路径）")
     p_cmp.add_argument("run_b", help="运行 B")
     p_cmp.add_argument("-o", "--out", default="runs/_compare", help="输出目录")
     p_cmp.set_defaults(func=cmd_compare)
 
-    p_agg = sub.add_parser("aggregate", help="N 轮重跑聚合成 mean±std（方差口径）")
+    p_agg = sub.add_parser("aggregate", help="N 轮重跑聚合成 mean±std（方差口径）",
+                           parents=[common])
     p_agg.add_argument("runs", nargs="+", help="N 个运行（runs/<run_id> 或完整路径）")
     p_agg.add_argument("-o", "--out", default="runs/_aggregate", help="输出目录")
     p_agg.set_defaults(func=cmd_aggregate)
 
-    p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）")
+    p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）",
+                           parents=[common])
     p_sys.add_argument("-a", "--adapter", default="hermes", help="VM 内适配器")
     p_sys.add_argument("-o", "--out", default="runs", help="输出根目录")
     p_sys.set_defaults(func=cmd_systest)
 
-    p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
+    p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境",
+                           parents=[common])
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
     p_doc.set_defaults(func=cmd_doctor)
 
-    p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）")
+    p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）",
+                          parents=[common])
     p_ui.add_argument("--port", type=int, default=8300, help="端口（默认 8300）")
     p_ui.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
     p_ui.add_argument("--window", action="store_true",
@@ -414,4 +409,7 @@ def main() -> None:
     p_ui.set_defaults(func=cmd_ui)
 
     args = parser.parse_args()
+    setup_logging(verbose=getattr(args, "verbose", False))
+    for env_file in load_dotenv():
+        log.info("已加载配置: %s", env_file)
     raise SystemExit(args.func(args))

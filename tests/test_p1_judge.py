@@ -9,10 +9,10 @@ import pytest
 
 import memhall.scoring.judge as jm
 from memhall.schema.evidence import Evidence, EvidencePhase, EvidenceType
+from memhall.schema.models_case import Anchor, JudgeProbe
 from memhall.scoring.engine import _answer_for
 from memhall.scoring.judge import ScriptedJudge
 from memhall.scoring.rules import EvidenceStore
-from memhall.schema.models_case import Anchor, JudgeProbe
 
 
 def _probe(anchors=None) -> JudgeProbe:

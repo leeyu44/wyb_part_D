@@ -11,7 +11,8 @@ evidence 是本 case 当前可用的证据集合（EvidenceStore）。
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from memhall.schema.evidence import (
     ActionDump,
@@ -52,6 +53,9 @@ class EvidenceStore:
 
     def add(self, ev: Evidence) -> None:
         self._items.append(ev)
+
+    def items(self) -> list[Evidence]:
+        return list(self._items)
 
     def by_type(self, *types: EvidenceType) -> list[Evidence]:
         return [e for e in self._items if e.type in types]

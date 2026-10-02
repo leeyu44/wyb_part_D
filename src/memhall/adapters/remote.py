@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import paramiko
 
 KNOWN_HOSTS = Path.home() / ".memhall" / "known_hosts"
+log = logging.getLogger(__name__)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -53,6 +55,8 @@ class SshChannel:
                 # 首次连接：TOFU——记录指纹供此后校验
                 cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             try:
+                log.info("SSH 连接 %s@%s:%d%s", self.user, self.host, self.port,
+                         "（首连，TOFU 记录指纹）" if not KNOWN_HOSTS.is_file() else "")
                 cli.connect(hostname=self.host, port=self.port, username=self.user,
                             password=self.password, timeout=15)
             except paramiko.SSHException as e:
@@ -73,6 +77,7 @@ class SshChannel:
 
         stdin_data：经 stdin 传入的数据（凭据/消息体走这里，不进命令行）。
         """
+        t0 = time.monotonic()
         cli = self._client()
         stdin, stdout, stderr = cli.exec_command(cmd, timeout=timeout)
         if stdin_data is not None:
@@ -82,6 +87,10 @@ class SshChannel:
         out = stdout.read().decode("utf-8", "replace")
         err = stderr.read().decode("utf-8", "replace")
         rc = stdout.channel.recv_exit_status()
+        dt = time.monotonic() - t0
+        log.debug("ssh [%.1fs rc=%d] %s", dt, rc, cmd[:160])
+        if rc != 0:
+            log.warning("ssh 命令失败 rc=%d (%.1fs): %s", rc, dt, err.strip()[:200])
         return rc, out, err
 
     def sudo(self, cmd: str, timeout: int = 120) -> tuple[int, str, str]:
@@ -115,7 +124,7 @@ def b64(text: str) -> str:
 
 
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def elapsed_ms(start: float) -> int:

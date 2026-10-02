@@ -6,32 +6,36 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
+import platform
 import subprocess
-from datetime import datetime, timezone
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
-from memhall.adapters.base import AgentAdapter
-from memhall.adapters.base import AdapterError, NO_WINDOW
+from memhall import __version__
+from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter
 from memhall.schema.evidence import (
-    ActionDump,
     Evidence,
     EvidencePhase,
     EvidenceType,
     FsDiff,
     FsDiffEntry,
-    MemorySnapshot,
     Reply,
 )
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.rules import EvidenceStore
 
+log = logging.getLogger(__name__)
+
 
 def _utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _sha256(payload: dict) -> str:
@@ -92,14 +96,22 @@ class CaseRunner:
                     except AdapterError as e:
                         # 拨钟不支持（如 Windows 本机适配器）→ 本 case 运行无效，
                         # 不能让一个 case 的环境限制打崩整套
+                        log.warning("%s 拨钟不支持（case 运行无效）: %s",
+                                    self.case.case_id, e)
                         self._runtime_error = str(e)
                         break
+                    log.info("%s 拨钟 %+d 天（累计 %+d）", self.case.case_id,
+                             se.clock_shift_days, self.clock_offset + se.clock_shift_days)
                     self.clock_offset += se.clock_shift_days
                 messages: list[str] = []
                 replies: list[Reply] = []
                 for step in phase.steps:
                     text = step.user if step.user is not None else step.task
-                    assert text is not None
+                    if text is None:
+                        raise ValueError(f"用例 {self.case.case_id} 阶段 {phase.name} "
+                                         "存在既无 user 也无 task 的步骤")
+                    log.debug("%s 阶段 %s 问: %s", self.case.case_id, phase.name,
+                              text[:60])
                     messages.append(text)
                     _safe_emit(self.on_event, {"type": "ask",
                                                "case": self.case.case_id,
@@ -114,6 +126,8 @@ class CaseRunner:
                                                    "ms": reply.latency_ms})
                     except AdapterError as e:
                         # 契约 01：适配器不可用 -> 后续步骤无意义，case 标运行无效
+                        log.error("%s 阶段 %s 适配器错误: %s", self.case.case_id,
+                                  phase.name, e)
                         replies.append(Reply(
                             session_id=session_id,
                             text=f"[RUNTIME_ERROR] {e}",
@@ -163,13 +177,14 @@ class CaseRunner:
                              after_snapshot=f"n={len(after_fs)}")
             self._collect("probe", EvidenceType.FS_DIFF, fs_diff.model_dump(mode="json"))
         self._flush()
+        log.debug("%s 证据落盘 %d 条", self.case.case_id, len(self.store.items()))
         return self.store
 
     def _flush(self) -> None:
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
         path = self.evidence_dir / "evidence.jsonl"
         with path.open("a", encoding="utf-8") as f:
-            for ev in self.store._items:
+            for ev in self.store.items():
                 f.write(ev.model_dump_json() + "\n")
 
 
@@ -188,10 +203,8 @@ def _safe_emit(on_event, payload: dict) -> None:
     """事件流给 UI 看过程用——它坏掉不能打崩评测。"""
     if on_event is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         on_event(payload)
-    except Exception:
-        pass
 
 
 def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
@@ -212,18 +225,26 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
         run_dir = out_dir / f"{run_id}-{k}"
         k += 1
     run_id = run_dir.name
+    log.info("评测开始: %s × %d 用例 × %d 探测点 → %s", adapter_name, len(cases),
+             sum(len(c.probes) for c in cases), run_dir)
     stores: list[EvidenceStore] = []
     for i, case in enumerate(cases):
+        log.info("[%d/%d] %s 开跑", i + 1, len(cases), case.case_id)
+        t0 = time.monotonic()
         _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
                               "i": i + 1, "n": len(cases)})
         runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
                             on_event=on_event)
         stores.append(runner.run())
+        log.info("[%d/%d] %s 完成（%.1fs）", i + 1, len(cases), case.case_id,
+                 time.monotonic() - t0)
         if on_case_done is not None:
             on_case_done(case.case_id, i + 1, len(cases))
     manifest = {
         "run_id": run_id,
         "tool": "memhall",
+        "tool_version": __version__,
+        "python": platform.python_version(),
         "schema_version": "0.1",
         "adapter": adapter_name,
         "case_source": case_source,
@@ -236,4 +257,5 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("评测完成: run_id=%s", run_id)
     return run_id, stores

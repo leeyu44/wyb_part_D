@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import re
 import time
-from datetime import datetime, timezone
 
 from memhall.adapters.base import AgentAdapter, AgentUnavailable
 from memhall.adapters.remote import SshChannel, b64, elapsed_ms, now_utc
@@ -41,6 +40,7 @@ class HermesAdapter(AgentAdapter):
     def __init__(self, channel: SshChannel | None = None):
         self.ch = channel or SshChannel()
         self._log_offset = 0
+        self._clock_epoch: int | None = None
         self._key = os.environ.get("AGENT_LLM_KEY", "")
         self._url = os.environ.get("AGENT_LLM_BASE_URL", "")
         self._model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")

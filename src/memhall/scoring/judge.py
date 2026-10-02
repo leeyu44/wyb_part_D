@@ -8,15 +8,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import string
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any
+
+import httpx
 
 from memhall.schema.models_case import JudgeProbe
+
+log = logging.getLogger(__name__)
 
 # 网关 RPM 限额保护：同一把 key 共享的调用节流（超限会被掐 TLS 而非 429）
 _MIN_INTERVAL = float(os.environ.get("JUDGE_MIN_INTERVAL", "12"))
@@ -37,14 +42,14 @@ def _rate_limit() -> None:
 class JudgeOutcome:
     """判卷结果：key 为 verdict_map 的 key；None 表示无法判定。"""
 
-    key: Optional[str]
+    key: str | None
     confidence: float
     evidence_refs: list[str]
     reason: str
-    judge_a: Optional[str] = None
-    judge_b: Optional[str] = None
-    judge_a_raw: Optional[str] = None
-    judge_b_raw: Optional[str] = None
+    judge_a: str | None = None
+    judge_b: str | None = None
+    judge_a_raw: str | None = None
+    judge_b_raw: str | None = None
     arbitrated: bool = False
 
 
@@ -164,7 +169,7 @@ def _tokens(s: str) -> set[str]:
 def _bigrams(s: str) -> set[str]:
     """CJK 相邻二元组——锚例区分词定位用。"""
     cs = re.findall(r"[一-鿿]", s)
-    return {a + b for a, b in zip(cs, cs[1:])}
+    return {a + b for a, b in zip(cs, cs[1:], strict=False)}
 
 
 # ---------- 双 LLM judge（移植自 okim-bench，适配 verdict_map）----------
@@ -221,10 +226,10 @@ class OpenAICompatJudge:
                  temperature: float | None = None):
         self.name, self.base_url, self.model, self.api_key = name, base_url, model, api_key
         self.temperature = temperature
-        self._client = None  # httpx.Client，首个请求时建
+        self._client: httpx.Client | None = None  # 首个请求时建
 
     @classmethod
-    def from_env(cls, which: str) -> "OpenAICompatJudge":
+    def from_env(cls, which: str) -> OpenAICompatJudge:
         prefix = f"JUDGE_{which}"
         return cls(
             name=os.environ.get(f"{prefix}_MODEL", "unknown"),
@@ -236,7 +241,7 @@ class OpenAICompatJudge:
         )
 
     @classmethod
-    def pair_from_env(cls) -> Optional[tuple["OpenAICompatJudge", ...]]:
+    def pair_from_env(cls) -> tuple[OpenAICompatJudge, ...] | None:
         """按环境变量组装判卷组：JUDGE_A 必需，JUDGE_B 可选（留空=单判）。
 
         单判省一半 RPM（网关限额实测个位数/分钟）；双判跨家族仲裁是
@@ -260,7 +265,6 @@ class OpenAICompatJudge:
         稳，避开每请求 TLS 握手的坏 record mac 放大器）+ 单题总预算
         JUDGE_TOTAL_BUDGET（默认 300s）内重试，预算耗尽即弃、走降级路径。
         """
-        import httpx
         _rate_limit()
         budget = float(os.environ.get("JUDGE_TOTAL_BUDGET", "300"))
         t0 = time.monotonic()
@@ -283,13 +287,18 @@ class OpenAICompatJudge:
                 last_err = e
                 remaining = budget - (time.monotonic() - t0)
                 if remaining <= 0:
+                    log.error("judge %s 预算耗尽（%.0fs），放弃本判: %s",
+                              self.name, budget, e)
                     break
+                log.warning("judge %s 第 %d 次失败（剩预算 %.0fs）: %s",
+                            self.name, attempt + 1, remaining, e)
                 time.sleep(min(2 ** attempt, 30.0, remaining))
         raise RuntimeError(
             f"judge {self.name} 预算 {budget:g}s 内重试仍失败: {last_err}")
 
     def complete(self, prompt: str) -> str:
-        payload = {"model": self.model, "messages": [{"role": "user", "content": prompt}]}
+        payload: dict[str, Any] = {"model": self.model,
+                                   "messages": [{"role": "user", "content": prompt}]}
         if self.temperature is not None:
             payload["temperature"] = self.temperature
         return self._post(payload)
@@ -303,7 +312,7 @@ class _RawVerdict:
     reason: str
 
 
-def _parse(raw: str, valid_keys: set[str]) -> Optional[_RawVerdict]:
+def _parse(raw: str, valid_keys: set[str]) -> _RawVerdict | None:
     try:
         start, end = raw.index("{"), raw.rindex("}") + 1
         data = json.loads(raw[start:end])

@@ -50,6 +50,8 @@ def test_similar_knob_widens_decoy(tmp_path):
         return c["phases"][0]["steps"][1]["user"].rsplit(" ", 1)[-1]
 
     high, low = decoy("high"), decoy("low")
+    # high 档同父同 token：诱饵与真值同在 proj/work
+    assert high.startswith("~/proj/") or high.startswith("~/work/")
     # low 档诱饵换到 opt/srv 父目录；真值父目录固定为 proj/work
     assert low.startswith("~/opt/") or low.startswith("~/srv/")
     # 真值父目录固定为 proj/work，low 档诱饵必不在其中

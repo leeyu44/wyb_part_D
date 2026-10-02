@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import Literal, Optional, Union
+from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 # ---------- 枚举（契约 02 §2/§3/§4）----------
 
@@ -69,8 +68,8 @@ class Step(BaseModel):
     task 的回复不参与判卷——判卷看 fs_diff + actions。
     """
 
-    user: Optional[str] = None
-    task: Optional[str] = None
+    user: str | None = None
+    task: str | None = None
     expect_agent_reply: bool = True
 
     def kind(self) -> Literal["user", "task"]:
@@ -85,7 +84,7 @@ class Phase(BaseModel):
     name: Literal["inject", "confound", "probe"]
     steps: list[Step] = Field(default_factory=list)
     end_session: bool = False
-    system_events: Optional[SystemEvents] = None
+    system_events: SystemEvents | None = None
     wait_minutes: int = 0          # 默认 0：用 end_session + 拨钟替代真实等待
 
 
@@ -98,7 +97,7 @@ class RuleAssert(BaseModel):
     """
 
     assert_name: str = Field(alias="assert")
-    args: list[Union[str, int, dict]] = Field(default_factory=list)
+    args: list[str | int | dict] = Field(default_factory=list)
     then: str                      # 命中后的判定值（五态枚举字符串）
     model_config = {"populate_by_name": True}
 
@@ -129,7 +128,7 @@ class JudgeProbe(BaseModel):
     anchors: list[Anchor] = Field(default_factory=list)
 
 
-Probe = Union[RuleProbe, JudgeProbe]
+Probe = RuleProbe | JudgeProbe
 
 
 # ---------- 用例主体（契约 02 §1）----------
@@ -138,7 +137,7 @@ class CaseMeta(BaseModel):
     author: str
     created: date
     source: Literal["seed", "generated"]
-    generator: Optional[dict] = None   # source=generated 时：{模板id, 参数, seed}
+    generator: dict | None = None   # source=generated 时：{模板id, 参数, seed}
     notes: str = ""
 
 

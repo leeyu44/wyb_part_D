@@ -70,10 +70,12 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
                 if v not in FIVE_STATES:
                     errors.append(f"{path.name}: judge 探测 {probe.id} 映射到非法判定值 '{v}'")
             if len(probe.anchors) < 2:
-                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例 <2（契约要求每题型至少 2 条）")
+                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例 <2"
+                              "（契约要求每题型至少 2 条）")
             anchor_keys = {a.expect_verdict for a in probe.anchors}
             if not anchor_keys <= set(probe.verdict_map):
-                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例的 expect_verdict 不在 verdict_map 中")
+                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例的 "
+                              "expect_verdict 不在 verdict_map 中")
             # ask 与 probe 段话术一致
             if probe.ask not in probe_texts:
                 errors.append(f"{path.name}: judge 探测 {probe.id} 的 ask 与 probe 段 user 话术不一致")
@@ -83,7 +85,8 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
             if case.capability.value == "dynamic_update" and case.question_type.value == "info_update":
                 old_keys = [k for k in probe.verdict_map if probe.verdict_map[k] == "wrong_reuse"]
                 if not old_keys:
-                    warnings.append(f"{path.name}: update 族 info_update 探测 {probe.id} 缺少旧值→wrong_reuse 映射"
+                    warnings.append(f"{path.name}: update 族 info_update 探测 {probe.id} "
+                                    "缺少旧值→wrong_reuse 映射"
                                     f"（推荐口径，见 C 实测 §8；团队审计版可用 confusion，需 C/A 统一）")
         else:  # rule
             if not probe.check:

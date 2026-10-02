@@ -11,6 +11,8 @@
 > P1 六条同日落地（T13-T16 仓库卫生同日完成：okim-bench/out 运行产物出库并归档标注、比赛材料移 docs/contest/、顶层 8 个空目录清理、README 文档表加状态列+过程稿头部标注、.pytest_cache 进 gitignore）。
 >
 > 原 P1 记录：judge 判卷换 httpx（单题总预算 JUDGE_TOTAL_BUDGET=300s 兜底，替代 12 分钟级阻塞）；判卷离线自检进 CI（ScriptedJudge × 金标准错判零容忍——实现过程中顺带修掉两个真实宽松缺陷：①新旧并列回答被单侧子串命中误判 ②同模板异值回答被锚例 0.8 重叠误配，均改为转人工）；`_answer_for` 精确匹配优先；凭据全走 stdin/base64（hermes 的 API key、sudo 密码不再落 VM 命令行）；SSH 主机密钥 TOFU 钉扎（~/.memhall/known_hosts，指纹变化拒连）；实验室 IP 移出发行默认值（.env.example/remote/discovery，vm_* 运维工具保留可覆盖的私有默认）。mock 基线仍为 62.2%（六维逐项一致），83 测试全绿。
+>
+> **T17-T20 工程基建同日完成（2026-10-02）**：logging 全链路（`memhall.logs`，CLI `-v/--verbose`；runner 逐 case/耗时、SSH 命令/耗时、判卷重试/预算耗尽；窗口 exe 的 memhall.log 接同一套）；ruff+mypy 进 CI（新 lint job，规则集 E/F/W/I/B/UP/SIM/RET；存量 127 条一次清零——顺手修了 zip 无 strict、两个变量遮蔽、test_opencode 的裸 Exception 断言，mypy 拧出 judge._client 无类型标注等 14 处）；manifest 记 tool_version+python（--version 已在 T01 做）；dotenv 收敛 `memhall.env` 单源（值含 " #" 截断修复，引号包裹可保真；UI/CLI 两份手搓解析删除）。mock 基线仍逐字不变（62.2%/71.4%），86 测试全绿。
 
 ---
 
@@ -104,25 +106,28 @@
 
 ## P2 · 工程基建（D 主责，1-2 天）
 
-- [ ] **T17 引入 logging**（D，3h）
+- [x] **T17 引入 logging**（D，3h）
   - 证据：全库 0 处 `import logging`，长评测（hermes 单轮小时级）挂掉后无日志可查，只有 print
   - 做法：runner/orchestrator、adapters、judge 走 logging；CLI 加 `--verbose`；exe 窗口模式已有的 memhall.log 接同一套
   - 验收：评测中断后能从日志定位到 case/step/命令
 
-- [ ] **T18 ruff + mypy 进 CI**（D，2h）
+- [x] **T18 ruff + mypy 进 CI**（D，2h）
   - 证据：无任何静态检查配置；`orchestrator.py:164` 访问 `store._items` 私有成员、`orchestrator.py:94` 生产代码 assert，这类问题无门禁
   - 做法：ruff（含 flake8 规则集）+ mypy（先宽松档）进 ci.yml，存量告警一次清零
   - 验收：CI 静态检查绿；故意加 `assert 1==2` 类问题会被拦（mypy 拦不了 assert——换成 ruff 能拦的例子：未用变量/F-string）
+  - 落地注：私有访问改走 EvidenceStore.items()、生产 assert 改显式 ValueError；存量 127 条（E501/B905/SIM105/E741 等）一次清零，UP042（str-Enum→StrEnum）豁免——schema 表示层不动
 
-- [ ] **T19 `memhall --version` + manifest 复现元数据**（D，1h）
+- [x] **T19 `memhall --version` + manifest 复现元数据**（D，1h）
   - 证据：无 version 子命令；manifest 缺包版本/case 源目录，deb/exe 下 git_hash 恒 "unknown"（`orchestrator.py:167-175`）
   - 做法：CLI 加 --version；manifest 记 memhall 版本 + case 目录名 + （有 git 时）hash，安装态记包版本兜底
   - 验收：deb 装机的 manifest 能看出"哪个版本、哪套题"
+  - 落地注：--version 在 T01 已做；本批补 manifest `tool_version` + `python`（git_hash/case_source 已在 P0 记录）
 
-- [ ] **T20 dotenv 解析与装机路径收敛**（D，2h）
+- [x] **T20 dotenv 解析与装机路径收敛**（D，2h）
   - 证据：手搓 dotenv 两份（`cli.py:215`、`ui/app.py:497`），`v.split(" #")` 值含 " #" 即碎；deb 装机路径逻辑 cmd_run（`/usr/share/memhall`）与 UI `_case_roots()` 各一套
   - 做法：抽 `memhall/env.py`（解析+候选路径），CLI/UI 共用
   - 验收：含 `#` 的配置值不被截断；路径逻辑全库只有一份
+  - 落地注：装机路径已在 P0 收敛进 memhall.paths；本批收敛 dotenv 并修复截断（引号包裹值保真，测试固化）
 
 ## P2 · 打包与发布（D+E，1-2 天，时间紧可裁到只剩 T21）
 
