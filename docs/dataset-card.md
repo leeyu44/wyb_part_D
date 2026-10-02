@@ -11,7 +11,7 @@
 | 种子用例（人工） | **43 道**（cases/full/），覆盖 6 能力 × 6 内容 = 36 格覆盖矩阵，无空格（lint 实测） |
 | 团队生成用例（模板扩量） | **21 道**（cases/gen/，scripts/gen_cases.py，seed=20260928） |
 | 任务链 | **4 条**（cases/chains/chain-001~003 每条 3 会话；chain-004 六会话长弧，对齐 LongMemEval/LoCoMo 的长程会话深度） |
-| 冒烟集 | **6 道**（cases/quick/），六能力各 1 道代表题，适配器接入验收口径（取自合并后 full，与 full 一致） |
+| 冒烟集 | **6 道**（虚拟集，无独立目录：full 中六能力各 1 题按 ID 引用，`paths.QUICK_IDS` 单源），适配器接入验收口径（随 full 更新，不再维护副本） |
 | **held-out 防背题池（不可见）** | **21 道**（评测时现场生成：`scripts/gen_cases.py --seed 4210 --out cases/heldout --prefix h`，题目文本不入公开仓库；公布 seed 保复现。智能体跑完公开集后换 held-out 复测，验证非背题） |
 | 生成器备用池（B 本地） | 72 道（seed=42，B 的 generators/generate_cases.py），与 gen/heldout 功能重叠，未并入 PR |
 

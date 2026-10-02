@@ -72,9 +72,10 @@ class AgentAdapter(ABC):
         """导出 reset 以来的操作记录。来源优先级：MCP 日志 > 智能体日志 > auditd。"""
 
     def fs_snapshot(self) -> list[str] | None:
-        """被测环境用户区文件清单（fs_diff 证据源）。None = 不支持，runner 跳过。
+        """被测环境用户区文件清单（fs_diff 证据源）。None = 不支持，runner 跳过，
+        fs 断言探测点将判运行无效（规则层不查判卷机本地盘）。
 
-        路径统一 ~ 相对形式（如 ~/dev/src/demo）；mock 等纯内存智能体返回 None。
+        路径统一 ~ 相对形式（如 ~/dev/src/demo）。
         """
         return None
 

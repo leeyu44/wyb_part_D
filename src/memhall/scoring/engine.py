@@ -23,7 +23,7 @@ from memhall.scoring.judge import (
     ScriptedJudge,
     dual_judge,
 )
-from memhall.scoring.rules import EvidenceStore, run_check
+from memhall.scoring.rules import EvidenceMissing, EvidenceStore, run_check
 
 _scripted = ScriptedJudge()
 
@@ -116,7 +116,21 @@ def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: in
 
 def _rule_verdict(probe: RuleProbe, store: EvidenceStore, run_id: str, seq: int) -> Verdict:
     check = [b.model_dump(by_alias=True) for b in probe.check]
-    value, idx = run_check(check, store)
+    try:
+        value, idx = run_check(check, store)
+    except EvidenceMissing as e:
+        # 所需证据不在场（适配器不支持该证据源）——运行无效，不计入分母
+        return Verdict(
+            verdict_id=f"v-{seq:04d}",
+            probe_id=probe.id,
+            case_id=probe.id.rsplit("-", 1)[0],
+            run_id=run_id,
+            verdict=VerdictValue.INVALID_RUN,
+            confidence=0.0,
+            decided_by=DecidedBy.RULE,
+            evidence_refs=probe.evidence_ref or ["evidence.jsonl"],
+            explanation=f"运行无效：{e}",
+        )
     branch = probe.check[idx]
     return Verdict(
         verdict_id=f"v-{seq:04d}",

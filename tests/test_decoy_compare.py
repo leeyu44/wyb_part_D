@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from memhall.cli import load_cases
+from memhall.cli import load_case_set, load_cases
 from memhall.report.compare import compare_runs
 from memhall.schema.models_case import JudgeProbe
 from memhall.scoring.decoy import run_decoy_test
@@ -39,7 +39,7 @@ def test_compare_runs(tmp_path: Path):
     from memhall.cli import _finish_run
     from memhall.schema.evidence import Verdict
 
-    cases = load_cases(REPO / "cases/quick")
+    cases = load_case_set("cases/quick")
     case_map = {c.case_id: c for c in cases}
     made = []
     for i in range(2):  # 各自独立目录：快机上同秒 run_id 相同会互相覆盖

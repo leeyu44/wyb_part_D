@@ -34,7 +34,7 @@ memhall/
 │   ├── report/      # 报告与雷达图
 │   ├── ui/          # Web UI（FastAPI + SSE 评测直播）
 │   └── cli.py / discovery.py / notify.py / systests.py
-├── cases/           # 用例库（full 43 / gen 21 / chains 4 / heldout 21※；quick 6 为冒烟子集）
+├── cases/           # 用例库（full 43 / gen 21 / chains 4 / heldout 21※；quick=full 的虚拟冒烟子集，按 ID 引用不落盘）
 ├── scripts/         # deb/exe 打包、VM 通道、判卷自检等脚本
 └── tests/           # 端到端与适配器测试
 ```
@@ -82,7 +82,7 @@ uv run pytest tests/ -q                # 测试（含端到端冒烟）
 ## 安装（openKylin / Debian 系）
 
 ```bash
-sudo dpkg -i memhall_0.2.1_all.deb     # 内置全部依赖 wheel，安装不联网
+sudo dpkg -i memhall_*_all.deb     # 内置全部依赖 wheel，安装不联网（版本号随发行）
 memhall run -a mock -c /usr/share/memhall/cases/full -o ~/memhall-runs
 dpkg -r memhall                         # 卸载干净（prerm 清 /usr/lib/memhall）
 ```

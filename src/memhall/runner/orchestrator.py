@@ -12,6 +12,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 from memhall.adapters.base import AgentAdapter
 from memhall.adapters.base import AdapterError, NO_WINDOW
 from memhall.schema.evidence import (
@@ -71,6 +73,13 @@ class CaseRunner:
         self.store.add(ev)
 
     def run(self) -> EvidenceStore:
+        # 用例快照先行：run 目录自包含，report/换机重渲染不依赖源码树用例库
+        # （heldout 题目文本不入仓库，快照是它唯一的持久载体）
+        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        (self.evidence_dir / "case.yaml").write_text(
+            yaml.safe_dump(self.case.model_dump(mode="json"),
+                           allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
         self.adapter.reset()
         base_fs = self.adapter.fs_snapshot()
         session_id = "s-01"
@@ -186,7 +195,7 @@ def _safe_emit(on_event, payload: dict) -> None:
 
 
 def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
-              adapter_name: str,
+              adapter_name: str, case_source: str = "",
               on_case_done=None, on_event=None) -> tuple[str, list[EvidenceStore]]:
     """跑整套用例，落盘 manifest，返回 (run_id, 每 case 的证据视图)。
 
@@ -217,6 +226,7 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
         "tool": "memhall",
         "schema_version": "0.1",
         "adapter": adapter_name,
+        "case_source": case_source,
         "git_hash": _git_hash(),
         "started_at": run_id[:15],
         "finished_at": _utc().isoformat(),

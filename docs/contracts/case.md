@@ -159,6 +159,6 @@ probes:
 
 ## 8. 用例集定义（runner 的输入口径）
 
-- `cases/quick/`：**冒烟集**——固定 5 题（六能力各挑 1 + 任务链 1 的代表题），`run --cases quick` 用；新适配器接入的验收口径（契约 01 §4）；
+- `cases/quick`：**冒烟集（虚拟集，无独立目录）**——六能力各 1 题按 ID 引用 full（单源 `memhall/paths.py QUICK_IDS`），`run -c cases/quick` 用；新适配器接入的验收口径（契约 01 §4）。曾以独立目录复制 full 文件，副本漂移后废弃；
 - `cases/full/`：全量集，30–40 题；`compare` 默认跑这个；
 - `cases/pool/`：题目池（full 的超集，扩量后 >60 题）——每次 run 按难度分层抽样出一份 full（防背题，design.md §4.4）。抽样的 seed 记进 run manifest，可复现。

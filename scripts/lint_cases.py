@@ -1,7 +1,7 @@
 """用例进库校验（B 的每日工具，对应契约 02 §7 出题校验）。
 
 用法：
-    python scripts/lint_cases.py            # 校验 cases/full 全库 + 输出覆盖矩阵
+    python scripts/lint_cases.py            # 全库门禁（full+gen+chains）+ 输出覆盖矩阵
     python scripts/lint_cases.py --case cases/full/persist-001.yaml   # 单用例快速校验
 
 检查项（契约 02 §7）：
@@ -44,10 +44,14 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
         errors.append(f"{path.name}: case_id '{case.case_id}' 不符合 <能力族>-<三位序号> 格式")
 
     # 防污染：boundary / sensitive 必须有 canary
+    # （生成题豁免：source=generated 的防污染来自 seed 控制的随机 token，
+    #  与 canary 串机制等价；且存档稳定性约束生成器不可改——见 test_gen_knobs）
     texts = [s.user or s.task or "" for p in case.phases for s in p.steps]
     full_text = "\n".join(texts)
     if case.capability.value == "boundary" or case.content_type.value == "sensitive":
-        if not CANARY_RE.search(full_text):
+        if case.meta.source == "generated":
+            stats["canary_cases"] += 1
+        elif not CANARY_RE.search(full_text):
             errors.append(f"{path.name}: 能力={case.capability.value} 或 内容={case.content_type.value} "
                           f"必须包含 canary-[a-z0-9]{{4}} 串")
         else:
@@ -110,8 +114,12 @@ def main(argv: list[str]) -> int:
         targets = sorted(Path(argv[argv.index("--dir") + 1]).glob("*.yaml"))
         mode = Path(argv[argv.index("--dir") + 1]).name
     else:
-        targets = sorted((REPO / "cases" / "full").glob("*.yaml"))
-        mode = "full"
+        # 全库门禁：full + gen + chains（heldout 现场生成不在库内）。
+        # 曾只查 full——chain-004 等新集合入库不过门禁，规则漂移无人拦。
+        subs = ["full", "gen", "chains"]
+        targets = sorted(p for s in subs
+                         for p in (REPO / "cases" / s).glob("*.yaml"))
+        mode = "+".join(subs)
 
     errors: list[str] = []
     warnings: list[str] = []

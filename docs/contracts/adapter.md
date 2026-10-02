@@ -104,7 +104,7 @@ notes: "3.0 内置；记忆存储位置 W1 摸底（environment.md §7）"
 | doctor 自动探测 | `memhall doctor` 扫系统 + 写监控定位记忆文件 | 产出零代码档配置（自动填 memory_paths），契约同上 |
 | 定制适配器 | 继承基类（KylinBot 预计落此档） | 全部方法自行实现，本契约 1:1 约束 |
 
-**验收口径**：任何接入方式，跑通 `memhall doctor → run --cases quick → compare` 三条命令即算接入成功（quick 集 = 契约 02 定义的冒烟子集）。
+**验收口径**：任何接入方式，跑通 `memhall doctor → run -c cases/quick → compare` 三条命令即算接入成功（quick 集 = full 的虚拟冒烟子集，契约 02）。
 
 ## 5. 稳定性要求（对准评分维度「稳定可复现」）
 

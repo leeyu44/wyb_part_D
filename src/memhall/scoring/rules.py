@@ -11,7 +11,6 @@ evidence 是本 case 当前可用的证据集合（EvidenceStore）。
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any, Callable
 
 from memhall.schema.evidence import (
@@ -25,6 +24,14 @@ from memhall.schema.evidence import (
 
 # 断言注册表：名字 -> 实现。RuleProbe 的 assert 名必须在这里，否则 lint 报错。
 ASSERTS: dict[str, Callable[..., bool]] = {}
+
+
+class EvidenceMissing(Exception):
+    """断言所需证据缺失（如适配器不支持文件系统快照）。
+
+    判定语义：证据不在场时该探测点运行无效，绝不退化到判卷机本地
+    状态凑数——评测机与判卷机分离时那是两台机器的两个文件系统。
+    """
 
 
 def _register(name: str):
@@ -83,12 +90,13 @@ class EvidenceStore:
 
 @_register("fs.path_exists")
 def _fs_path_exists(args: list[Any], ev: EvidenceStore) -> bool:
-    """路径存在：优先信 fs_diff 证据（被测环境实测）；无 diff 时降级本地检查（mock 场景）。"""
+    """路径存在：只信 fs_diff 证据（被测环境实测）。无 fs_diff 证据
+    （适配器不支持文件系统快照）抛 EvidenceMissing → 探测点运行无效。"""
     target = str(args[0])
     diff = ev.latest_fs_diff()
-    if diff is not None:
-        return any(e.path == target and e.change == "created" for e in diff.entries)
-    return Path(target).expanduser().exists()
+    if diff is None:
+        raise EvidenceMissing("fs_diff 证据缺失（适配器不支持文件系统快照）")
+    return any(e.path == target and e.change == "created" for e in diff.entries)
 
 
 @_register("fs.path_absent")
@@ -100,7 +108,9 @@ def _fs_path_absent(args: list[Any], ev: EvidenceStore) -> bool:
 def _fs_diff_contains(args: list[Any], ev: EvidenceStore) -> bool:
     target = str(args[0])
     diff = ev.latest_fs_diff()
-    return bool(diff) and any(target in e.path for e in diff.entries)
+    if diff is None:
+        raise EvidenceMissing("fs_diff 证据缺失（适配器不支持文件系统快照）")
+    return any(target in e.path for e in diff.entries)
 
 
 # ---------- 记忆库类 ----------

@@ -14,7 +14,9 @@ from pathlib import Path
 
 import yaml
 
-from memhall.adapters.mock import MockAdapter
+from memhall import __version__
+from memhall.adapters import create_adapter
+from memhall.paths import QUICK_IDS, resolve_case_dir
 from memhall.runner.orchestrator import run_suite
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.engine import evaluate_case
@@ -29,6 +31,35 @@ def load_cases(case_dir: Path) -> list[MemoryCase]:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         cases.append(MemoryCase.model_validate(raw))
     return cases
+
+
+def load_case_set(spec: str) -> list[MemoryCase]:
+    """按 'cases/full' / 'cases/quick' 规格载入用例集。
+
+    quick 是虚拟集：full 中六能力各 1 题，按 QUICK_IDS 引用过滤——
+    不再以独立目录复制 full 文件（副本曾漂移），找不到返回空列表。
+    """
+    if spec.rstrip("/") in ("quick", "cases/quick"):
+        full = resolve_case_dir("cases/full")
+        if full is None:
+            return []
+        by_id = {c.case_id: c for c in load_cases(full)}
+        return [by_id[i] for i in QUICK_IDS if i in by_id]
+    d = resolve_case_dir(spec)
+    return load_cases(d) if d is not None else []
+
+
+def load_cases_for_run(run_dir: Path) -> dict[str, MemoryCase]:
+    """run 目录自包含优先：cases/<id>/case.yaml 快照（heldout run、换机重渲染
+    都成立）；旧 run 无快照时退回当前用例库。"""
+    cases: dict[str, MemoryCase] = {}
+    for p in sorted((run_dir / "cases").rglob("case.yaml")):
+        c = MemoryCase.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
+        cases[c.case_id] = c
+    if cases:
+        return cases
+    d = resolve_case_dir("cases")
+    return {c.case_id: c for c in load_cases(d)} if d is not None else {}
 
 
 def _finish_run(run_dir: Path, run_id: str, manifest: dict,
@@ -57,45 +88,23 @@ def _finish_run(run_dir: Path, run_id: str, manifest: dict,
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    case_dir = Path(args.cases)
-    if not case_dir.exists():  # deb 装机：用例在 /usr/share/memhall/cases
-        deb_root = Path("/usr/share/memhall") / args.cases
-        if deb_root.exists():
-            case_dir = deb_root
-    cases = load_cases(case_dir)
+    cases = load_case_set(args.cases)
     if not cases:
-        print(f"未找到用例: {case_dir}", file=sys.stderr)
+        print(f"未找到用例: {args.cases}", file=sys.stderr)
         return 1
 
-    adapters: dict = {"mock": MockAdapter}
-    if args.adapter == "hermes":
-        from memhall.adapters.hermes import HermesAdapter
-        adapters["hermes"] = HermesAdapter
-    elif args.adapter == "kylinbot":
-        from memhall.adapters.kylinbot import KylinBotAdapter
-        adapters["kylinbot"] = KylinBotAdapter
-    elif args.adapter == "hermes-local":
-        from memhall.adapters.hermes_local import LocalHermesAdapter
-        adapters["hermes-local"] = LocalHermesAdapter
-    elif args.adapter == "claude-local":
-        from memhall.adapters.claude_local import LocalClaudeAdapter
-        adapters["claude-local"] = LocalClaudeAdapter
-    elif args.adapter == "qwen-local":
-        from memhall.adapters.qwen_local import LocalQwenAdapter
-        adapters["qwen-local"] = LocalQwenAdapter
-    elif args.adapter == "opencode":
-        from memhall.adapters.opencode import OpenCodeAdapter
-        adapters["opencode"] = OpenCodeAdapter
-    if args.adapter not in adapters:
-        print(f"未知适配器: {args.adapter}（可选: {', '.join(adapters)}）", file=sys.stderr)
+    try:
+        adapter = create_adapter(args.adapter)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
         return 1
-    adapter = adapters[args.adapter]()
 
     judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
     if args.judge == "dual" and judges is None:
         print("缺少 JUDGE_A_ 环境变量，回退脚本判卷", file=sys.stderr)
 
-    run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter)
+    run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter,
+                               case_source=args.cases)
     run_dir = Path(args.out) / run_id
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
 
@@ -171,8 +180,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
 def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    repo_root = Path(__file__).resolve().parents[2]
-    cases = {c.case_id: c for c in load_cases(repo_root / "cases")}
+    cases = load_cases_for_run(run_dir)
     judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
     verdicts = _load_verdicts(run_dir, manifest, cases, judges)
     metrics = _finish_run(run_dir, manifest["run_id"], manifest, verdicts, cases)
@@ -301,9 +309,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
 def _run_window(app) -> int:
     """原生窗口壳：优先 pywebview（真原生窗口+任务栏图标）；打包环境缺
     pythonnet/WebView2 时退 Edge 应用模式窗口（无地址栏，观感接近原生）。"""
-    import shutil
     import socket
-    import subprocess
     import threading
     import time
     import urllib.request
@@ -340,6 +346,7 @@ def _run_window(app) -> int:
 def _open_app_window(url: str) -> None:
     """Edge/Chrome 的 --app 窗口（无地址栏）；都没有则普通浏览器。"""
     import os
+    import shutil
     import webbrowser
 
     cands = [shutil.which("msedge"), shutil.which("chrome"),
@@ -361,6 +368,8 @@ def main() -> None:
         sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
     parser = argparse.ArgumentParser(prog="memhall",
                                      description="麟阁：智能体记忆能力评测基准")
+    parser.add_argument("--version", action="version",
+                        version=f"memhall {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_run = sub.add_parser("run", help="跑一轮评测并出报告")

@@ -33,10 +33,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
-# 打包成 exe 时（onedir）源码树不存在：cases/runs/.env 都落在 exe 同级目录
-REPO_ROOT = (Path(sys.executable).resolve().parent
-             if getattr(sys, "frozen", False)
-             else Path(__file__).resolve().parents[3])
+from memhall.paths import QUICK_IDS, case_roots, repo_root
+
+REPO_ROOT = repo_root()
 ENV_PATH = REPO_ROOT / ".env"
 if not os.access(REPO_ROOT, os.W_OK):  # deb 装机：系统目录不可写，配置落家目录
     ENV_PATH = Path.home() / "memhall.env"
@@ -54,16 +53,8 @@ def _runs_root() -> Path:
 
 
 def _case_roots() -> list[Path]:
-    """用例目录候选根：源码=仓库；onedir=exe 同级；onefile=解包目录（用例打进
-    exe 内）；deb 装机=/usr/share/memhall。runs/.env 始终落 exe 同级。"""
-    roots = [REPO_ROOT]
-    meipass = getattr(sys, "_MEIPASS", "")
-    if meipass:
-        roots.append(Path(meipass))
-    deb_share = Path("/usr/share/memhall")
-    if (deb_share / "cases").is_dir():
-        roots.append(deb_share)
-    return roots
+    """用例目录候选根（源码/exe/onefile 解包/deb 安装），单源在 memhall.paths。"""
+    return case_roots()
 
 # 用例集中文说明（键=目录名）。顺序即 UI 下拉框排序，quick 在最前：装完先冒烟。
 CASE_SET_DESC = {
@@ -210,15 +201,18 @@ def create_app() -> FastAPI:
             base = root / "cases"
             if base.is_dir():
                 for d in base.iterdir():
-                    if d.is_dir():
+                    # quick 是虚拟集（full 子集按 ID 引用），物理残留目录跳过
+                    if d.is_dir() and d.name != "quick":
                         found.setdefault(d.name, d)
         order = {k: i for i, k in enumerate(CASE_SET_DESC)}
-        sets = [
+        sets = [{"id": "cases/quick",
+                 "label": CASE_SET_DESC["quick"].format(n=len(QUICK_IDS))}]
+        sets += [
             {"id": f"cases/{name}",
              "label": CASE_SET_DESC.get(name, "{name} · {n} 题").format(n=len(list(d.glob("*.y*ml"))), name=name)}
             for name, d in sorted(found.items(), key=lambda kv: (order.get(kv[0], 99), kv[0]))
         ]
-        return {"sets": sets or [{"id": "cases/full", "label": "种子题库（默认）"}]}
+        return {"sets": sets if found else [{"id": "cases/full", "label": "种子题库（默认）"}]}
 
     # ---------- 运行会话 ----------
     @app.post("/api/start")
@@ -236,41 +230,20 @@ def create_app() -> FastAPI:
             loop.call_soon_threadsafe(session.q.put_nowait, payload)
 
         def worker() -> None:
-            from memhall.adapters.mock import MockAdapter
-            from memhall.cli import _finish_run, load_cases
+            from memhall.adapters import create_adapter
+            from memhall.cli import _finish_run, load_case_set
             from memhall.runner.orchestrator import run_suite
             from memhall.scoring.engine import evaluate_case
             from memhall.scoring.judge import OpenAICompatJudge
             try:
-                case_path = next((r / case_dir for r in _case_roots()
-                                  if (r / case_dir).is_dir()),
-                                 REPO_ROOT / case_dir)
-                cases = load_cases(case_path)
+                cases = load_case_set(case_dir)
                 if not cases:
                     emit({"type": "error", "msg": f"未找到用例: {case_dir}"})
                     return
-                adapters: dict = {"mock": MockAdapter}
-                if adapter_name == "hermes":
-                    from memhall.adapters.hermes import HermesAdapter
-                    adapters["hermes"] = HermesAdapter
-                elif adapter_name == "kylinbot":
-                    from memhall.adapters.kylinbot import KylinBotAdapter
-                    adapters["kylinbot"] = KylinBotAdapter
-                elif adapter_name == "hermes-local":
-                    from memhall.adapters.hermes_local import LocalHermesAdapter
-                    adapters["hermes-local"] = LocalHermesAdapter
-                elif adapter_name == "claude-local":
-                    from memhall.adapters.claude_local import LocalClaudeAdapter
-                    adapters["claude-local"] = LocalClaudeAdapter
-                elif adapter_name == "qwen-local":
-                    from memhall.adapters.qwen_local import LocalQwenAdapter
-                    adapters["qwen-local"] = LocalQwenAdapter
-                elif adapter_name == "opencode":
-                    from memhall.adapters.opencode import OpenCodeAdapter
-                    adapters["opencode"] = OpenCodeAdapter
-                if adapter_name not in adapters:
-                    emit({"type": "error",
-                          "msg": f"未知适配器: {adapter_name}"})
+                try:
+                    adapter = create_adapter(adapter_name)
+                except ValueError as e:
+                    emit({"type": "error", "msg": str(e)})
                     return
                 emit({"type": "start", "n_cases": len(cases),
                       "adapter": adapter_name, "cases": case_dir,
@@ -281,11 +254,10 @@ def create_app() -> FastAPI:
                         raise _RunAborted()
                     emit({"type": "case", "case": cid, "i": i, "n": n})
 
-                adapter = adapters[adapter_name]()
                 judges = (OpenAICompatJudge.pair_from_env()
                           if judge_mode == "dual" else None)
                 run_id, stores = run_suite(adapter, cases, out_root,
-                                           adapter_name,
+                                           adapter_name, case_source=case_dir,
                                            on_case_done=on_case_done,
                                            on_event=emit)
                 emit({"type": "phase", "msg": "评测完成，开始判卷…"})
