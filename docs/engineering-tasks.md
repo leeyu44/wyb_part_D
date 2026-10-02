@@ -7,6 +7,8 @@
 优先级含义：P0 = 正确性硬伤，半天内可修；P1 = 评审最扎眼的可信度/安全问题；P2 = 官方化外观与基建，可裁。
 
 > 进度：P0 六条已于 2026-10-02 落地（mock 基线分数不变：full 62.2% / quick 71.4%，71 测试全绿）。顺带修掉 ruff F 检查逮到的存量真 bug：`_open_app_window` 引用未导入的 `shutil`（pywebview 缺失时的 Edge 回退路径会 NameError）。lint 全库门禁时发现 gen 生成题无字面 canary——按 `source=generated` 豁免（seed 随机 token 防污染等价，存档稳定性约束生成器不可改）。
+>
+> P1 六条同日落地：judge 判卷换 httpx（单题总预算 JUDGE_TOTAL_BUDGET=300s 兜底，替代 12 分钟级阻塞）；判卷离线自检进 CI（ScriptedJudge × 金标准错判零容忍——实现过程中顺带修掉两个真实宽松缺陷：①新旧并列回答被单侧子串命中误判 ②同模板异值回答被锚例 0.8 重叠误配，均改为转人工）；`_answer_for` 精确匹配优先；凭据全走 stdin/base64（hermes 的 API key、sudo 密码不再落 VM 命令行）；SSH 主机密钥 TOFU 钉扎（~/.memhall/known_hosts，指纹变化拒连）；实验室 IP 移出发行默认值（.env.example/remote/discovery，vm_* 运维工具保留可覆盖的私有默认）。mock 基线仍为 62.2%（六维逐项一致），83 测试全绿。
 
 ---
 
@@ -44,34 +46,34 @@
 
 ## P1 · 判卷可信度（C 主责，≈ 1.5 天）
 
-- [ ] **T07 `_answer_for` 匹配收紧**（C，1h）
+- [x] **T07 `_answer_for` 匹配收紧**（C，1h）
   - 证据：`engine.py:43-45` 双向子串匹配问题↔回复，同 case 两个探测问题措辞相近时取错回答
   - 做法：精确匹配优先 → 再退子串；按 phase 收窄搜索范围
   - 验收：构造同前缀双问题的用例，判定各取各的回复
 
-- [ ] **T08 判卷自检进 CI**（C，1h，性价比最高的一条）
+- [x] **T08 判卷自检进 CI**（C，1h，性价比最高的一条）
   - 证据：`scripts/judge_selftest.py` 存在但 CI 不跑——ScriptedJudge 的尾段/bigram 启发式是对自家 mock 调参的，改一行 `_norm` 历史分数就漂移且无人知晓
   - 做法：ci.yml 加一步跑 judge_selftest（离线、确定性、秒级）
   - 验收：改坏 `_norm` 的分支 CI 变红
 
-- [ ] **T09 judge HTTP 换 httpx + 总超时**（C，2h）
+- [x] **T09 judge HTTP 换 httpx + 总超时**（C，2h）
   - 证据：`judge.py:255-270` 手搓 `http.client` + 8 次指数退避（单题最长阻塞约 12 分钟），无总预算、无并发；hermes 侧已实测 httpx keep-alive 稳
   - 做法：换 httpx（项目内已有实证），单题总超时上限（如 5 分钟），可配并发
   - 验收：judge 端点挂死时单题在总超时处放弃并走降级路径，不拖垮整轮
 
 ## P1 · 凭据卫生（D 主责，≈ 1 天）
 
-- [ ] **T10 API key / sudo 密码不再内联 shell 命令行**（D，3h）
+- [x] **T10 API key / sudo 密码不再内联 shell 命令行**（D，3h）
   - 证据：`hermes.py:44-47`（`export DEEPSEEK_API_KEY='...'`）、`hermes.py:131,140` 与 `systests.py:54`（`echo '{password}' | sudo -S`）——VM 内 ps/history 可见，值含引号即命令碎裂；消息体已走 base64，凭据却裸拼
   - 做法：凭据走环境变量注入（SSH `exec_command(environment=...)`）或 stdin 传 sudo；key 单引号问题随之消失
   - 验收：VM 上 `ps aux | grep hermes` 看不到明文 key；key 含特殊字符不炸
 
-- [ ] **T11 SSH 主机密钥钉扎**（D，1h）
+- [x] **T11 SSH 主机密钥钉扎**（D，1h）
   - 证据：`remote.py:39` `AutoAddPolicy` 不校验主机密钥
   - 做法：首次连接记录指纹到 `~/.memhall/known_hosts`，之后不匹配即拒绝并提示
   - 验收：改 IP 指向别的机器时连接报错而非静默接受
 
-- [ ] **T12 发行默认值去实验室环境**（D，0.5h）
+- [x] **T12 发行默认值去实验室环境**（D，0.5h）
   - 证据：`.env.example` 预填 `VM_HOST=192.168.61.133`，`remote.py:28` 同 IP 做默认值——个人实验环境事实进了发行物
   - 做法：默认值留空 + 文档给配置示例；本机配置走 .env
   - 验收：新机器解包后不带任何 192.168.* 痕迹

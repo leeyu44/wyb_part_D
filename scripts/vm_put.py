@@ -13,7 +13,9 @@ import paramiko
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-HOST = "192.168.61.133"
+# 实验室内网默认（VM_H_* 工具链私有；外部使用改环境变量 VM_TOOL_HOST）
+import os as _os
+HOST = _os.environ.get("VM_TOOL_HOST", "192.168.61.133")
 USER = "okim"
 
 

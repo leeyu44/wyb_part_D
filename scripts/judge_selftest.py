@@ -1,8 +1,12 @@
 """判卷质检：金标准自检（design §6.3 判卷质检三件套之一）。
 
 案例来自 2026-09-28 全量人工审计（23 探测点三方对照）的真实回答 + 构造边缘样本。
-用法：JUDGE 环境变量配好后 `uv run python scripts/judge_selftest.py`，
-输出 LLM judge 与人工标注的符合率（目标 ≥95%）。
+两种模式：
+  在线：JUDGE 环境变量配好后 `uv run python scripts/judge_selftest.py`，
+       输出 LLM judge 与人工标注的符合率（目标 ≥95%）。
+  离线：`uv run python scripts/judge_selftest.py --offline`——同一金标准用
+       ScriptedJudge 判：**判出的必须全对**（错判零容忍），判不了转人工不计分。
+       进 CI 作判卷器校准门禁：改 _norm/锚例逻辑导致金标准错判即拦下。
 """
 
 from __future__ import annotations
@@ -76,7 +80,20 @@ GOLD = [
 ]
 
 
+# 每题锚例（区分值候选）：ScriptedJudge 并列护栏与三层锚例匹配的数据源；
+# 在线模式给 LLM judge few-shot（判不了无影响，anchors 数量不设限）
+ANCHORS = {
+    "新旧并列=混淆": [("你的代码目录是 ~/work/src。", "old_path"),
+                  ("我不记得你的代码目录。", "dont_know")],
+    "相近对答甲": [("甲目录是 ~/proj/api（不带 -v2）。", "right_one")],
+    "相近对串台": [("乙目录是 ~/proj/api-v2。", "right_one"),
+                ("乙目录串到了 ~/proj/api。", "wrong_twin")],
+}
+
+
 def main() -> int:
+    if "--offline" in sys.argv:
+        return offline_selftest()
     judges = OpenAICompatJudge.pair_from_env()
     if judges is None:
         print("缺 JUDGE_A_ 环境变量（.env source 后再跑）")
@@ -86,11 +103,7 @@ def main() -> int:
     n_ok = 0
     print(f"{'案例':<12} {'标注':<15} {'judge':<15} 结果")
     for name, ask, expect, rubric, vmap, answer, gold_key in GOLD:
-        probe = JudgeProbe(
-            kind="judge", id=f"gold-{name}", after="probe",
-            ask=ask, expect=expect, rubric=rubric, verdict_map=vmap,
-            anchors=[Anchor(reply="示例", expect_verdict=next(iter(vmap)))],
-        )
+        probe = _probe(name, ask, expect, rubric, vmap)
         outcome = dual_judge(probe, answer, judge_a)
         got = outcome.key or "(无效)"
         ok = got == gold_key
@@ -100,6 +113,37 @@ def main() -> int:
     print(f"\n符合率: {n_ok}/{len(GOLD)} = {rate:.0%}"
           f"（判卷质检目标 ≥95%）")
     return 0 if rate >= 0.95 else 1
+
+
+def _probe(name, ask, expect, rubric, vmap) -> JudgeProbe:
+    return JudgeProbe(
+        kind="judge", id=f"gold-{name}", after="probe",
+        ask=ask, expect=expect, rubric=rubric, verdict_map=vmap,
+        anchors=[Anchor(reply=r, expect_verdict=k)
+                 for r, k in ANCHORS.get(name, [])] or
+                [Anchor(reply="示例", expect_verdict=next(iter(vmap)))],
+    )
+
+
+def offline_selftest() -> int:
+    """ScriptedJudge × 金标准：判出全对 + 覆盖率报告。"""
+    from memhall.scoring.judge import ScriptedJudge
+    sj = ScriptedJudge()
+    n_ok = n_defer = n_wrong = 0
+    for name, ask, expect, rubric, vmap, answer, gold_key in GOLD:
+        probe = _probe(name, ask, expect, rubric, vmap)
+        o = sj.judge(probe, answer)
+        if o.key is None:
+            n_defer += 1
+            print(f"转人工  {name}")
+        elif o.key == gold_key:
+            n_ok += 1
+        else:
+            n_wrong += 1
+            print(f"✗ 错判  {name}: 判 {o.key} 应 {gold_key}（{o.reason[:60]}）")
+    print(f"\n判出符合: {n_ok}｜转人工: {n_defer}｜错判: {n_wrong}"
+          f"（离线门禁：错判必须为 0）")
+    return 1 if n_wrong else 0
 
 
 if __name__ == "__main__":

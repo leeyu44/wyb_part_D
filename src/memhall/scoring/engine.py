@@ -29,15 +29,20 @@ _scripted = ScriptedJudge()
 
 
 def _answer_for(store: EvidenceStore, ask: str) -> str:
-    """取 probe 段中对该问题的回复（按 message 匹配，取最后一条）。"""
-    best = ""
+    """取 probe 段中对该问题的回复。精确话术优先（lint 已保证 ask 与 probe 段
+    某条 user 逐字一致），无精确命中再退子串；同问多次取最后一条。
+    子串双向包含曾把措辞相近的相邻探测问题配错回复——精确层先行分流。"""
+    exact = ""
+    fuzzy = ""
     for ev in store.by_type(EvidenceType.DIALOGUE):
         msgs = ev.payload.get("messages", [])
         replies = ev.payload.get("replies", [])
         for msg, rep in zip(msgs, replies):
-            if _norm_pair(msg, ask):
-                best = rep.get("text", "")
-    return best
+            if msg.strip() == ask.strip():
+                exact = rep.get("text", "")
+            elif _norm_pair(msg, ask):
+                fuzzy = rep.get("text", "")
+    return exact or fuzzy
 
 
 def _norm_pair(message: str, ask: str) -> bool:

@@ -11,7 +11,7 @@ VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','
 W=~/wheels
 rm -rf $W && mkdir -p $W
 pip3 download -q -i https://pypi.tuna.tsinghua.edu.cn/simple -d $W \
-  pydantic pyyaml matplotlib paramiko fastapi uvicorn
+  pydantic pyyaml matplotlib paramiko fastapi uvicorn httpx
 pip3 wheel -q --no-deps -i https://pypi.tuna.tsinghua.edu.cn/simple -w $W .
 
 STAGE=~/deb-stage/memhall

@@ -392,8 +392,8 @@ def check_env() -> list[EnvCheck]:
         except OSError as e:
             checks.append(EnvCheck("LLM 网关可达", False,
                                    f"{host}:{port} {type(e).__name__}"))
-    host = os.environ.get("VM_HOST", "192.168.61.133")
-    if os.environ.get("VM_PASS"):
+    host = os.environ.get("VM_HOST")
+    if host and os.environ.get("VM_PASS"):
         try:
             with socket.create_connection((host, 22), timeout=4):
                 checks.append(EnvCheck("评测机 SSH", True, f"{host}:22"))
@@ -401,7 +401,8 @@ def check_env() -> list[EnvCheck]:
             checks.append(EnvCheck("评测机 SSH", False,
                                    f"{host}:22 {type(e).__name__}"))
     else:
-        checks.append(EnvCheck("评测机 SSH", False, "缺 VM_PASS，跳过"))
+        checks.append(EnvCheck("评测机 SSH", False,
+                               "缺 VM_HOST/VM_PASS，跳过（本机适配器评测不需要）"))
     return checks
 
 

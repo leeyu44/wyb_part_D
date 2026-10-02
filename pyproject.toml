@@ -22,6 +22,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "uvicorn>=0.54.0",
     "pywebview>=5.0; sys_platform == 'win32'",
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]
@@ -33,6 +34,10 @@ build-backend = "uv_build"
 
 [tool.uv]
 default-groups = []
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
 [dependency-groups]
 dev = [

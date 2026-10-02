@@ -41,11 +41,15 @@ class HermesAdapter(AgentAdapter):
     def __init__(self, channel: SshChannel | None = None):
         self.ch = channel or SshChannel()
         self._log_offset = 0
-        self._base_env = (
-            f"export DEEPSEEK_API_KEY='{os.environ.get('AGENT_LLM_KEY', '')}' "
-            f"DEEPSEEK_BASE_URL='{os.environ.get('AGENT_LLM_BASE_URL', '')}'; "
-        )
+        self._key = os.environ.get("AGENT_LLM_KEY", "")
+        self._url = os.environ.get("AGENT_LLM_BASE_URL", "")
         self._model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
+
+    def _llm_env_lines(self) -> str:
+        """网关凭据的 env 文件内容（send 走 stdin；systest 离线脚本 source 用）。"""
+        return (f"DEEPSEEK_API_KEY={self._key}\n"
+                f"DEEPSEEK_BASE_URL={self._url}\n"
+                f"DEEPSEEK_MODEL={self._model}\n")
 
     def reset(self) -> None:
         rc, _, err = self.ch.run(
@@ -58,13 +62,19 @@ class HermesAdapter(AgentAdapter):
         self._log_offset = int(out.strip() or 0)
 
     def send(self, session_id: str, message: str) -> Reply:
-        cmd = (f"{self._base_env}"
-               f"echo {b64(message)} | base64 -d | timeout 280 {HERMES_BIN} chat "
-               f"--query-file - --oneshot --provider deepseek --model {self._model} "
-               f"2>/dev/null")
+        # 凭据与消息都走 stdin（base64），命令行零明文：VM 内 ps/history
+        # 不可见，值含引号/特殊字符也不会把命令拼碎。
+        # stdin 两段：第 1 行=网关 env 文件（落临时文件 600 后即删），其余=消息。
+        script = (
+            'd=$(mktemp -t mh-env.XXXXXX) && '
+            'head -n1 | base64 -d > "$d" && chmod 600 "$d" && . "$d" && rm -f "$d" && '
+            f'tail -n +2 | base64 -d | timeout 280 {HERMES_BIN} chat --query-file - '
+            '--oneshot --provider deepseek --model "$DEEPSEEK_MODEL" 2>/dev/null')
         sent = now_utc()
         t0 = time.time()
-        rc, out, _ = self.ch.run(cmd, timeout=300)
+        rc, out, _ = self.ch.run(script, timeout=300,
+                                 stdin_data=b64(self._llm_env_lines()) + "\n"
+                                            + b64(message))
         text = _strip_tui(out)
         if rc != 0 and not text:
             raise AgentUnavailable(f"hermes 调用失败({rc})")
@@ -119,16 +129,14 @@ class HermesAdapter(AgentAdapter):
                           coverage="partial" if actions else "unknown")
 
     def clock_shift(self, days: int) -> None:
-        """VM 拨钟（sudo date -s），记录原时刻供恢复。"""
+        """VM 拨钟（sudo date -s，密码走 stdin），记录原时刻供恢复。"""
         if days == 0:
             return
         rc, out, _ = self.ch.run("date +%s")
         if rc != 0:
             raise RuntimeError("拨钟前读取系统时间失败")
         self._clock_epoch = int(out.strip())
-        rc, _, err = self.ch.run(
-            f"echo '{self.ch.password}' | sudo -S date -s '+{days} days' "
-            f">/dev/null 2>&1 && echo ok")
+        rc, _, err = self.ch.sudo(f"date -s '+{days} days' >/dev/null 2>&1 && echo ok")
         if rc != 0:
             raise RuntimeError(f"拨钟失败: {err.strip()[:200]}")
 
@@ -136,9 +144,7 @@ class HermesAdapter(AgentAdapter):
         epoch = getattr(self, "_clock_epoch", None)
         if epoch is None:
             return
-        self.ch.run(
-            f"echo '{self.ch.password}' | sudo -S date -s @{epoch} "
-            f">/dev/null 2>&1 && echo ok")
+        self.ch.sudo(f"date -s @{epoch} >/dev/null 2>&1 && echo ok")
         self._clock_epoch = None
 
     def fs_snapshot(self) -> list[str] | None:

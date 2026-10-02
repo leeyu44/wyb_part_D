@@ -76,6 +76,23 @@ class ScriptedJudge:
         correct_keys = [k for k, v in probe.verdict_map.items() if v == "correct"]
         refs = ["transcript:answer"]
 
+        ans_raw = re.sub(r"\s+", "", answer)
+        ans_vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", ans_raw))
+        ans_bg = _bigrams(ans_raw)
+        exp_vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}",
+                                  re.sub(r"\s+", "", probe.expect)))
+
+        def _hit_anchor(expect_verdict: str, reason: str) -> JudgeOutcome:
+            """锚例命中收口：非 correct 类锚例（旧值/孪生值/编造值）命中且期望值
+            也在回答中共现 = "新旧并列"——rubric 多判混淆，脚本层无法决断转
+            LLM/人工（人工审计实录的错判形态：单侧子串命中即给分）。
+            correct 类锚例命中 + 期望值共现是"答对"，不拦。"""
+            if expect_verdict not in correct_keys and exp_vals and exp_vals <= ans_vals:
+                return JudgeOutcome(
+                    None, 0.0, refs,
+                    "回答并列期望值与候选值，脚本无法决断，转 LLM/人工")
+            return JudgeOutcome(expect_verdict, 0.9, refs, reason)
+
         # 锚例匹配三层：①尾段命中——锚例值通常在"是/用/在/要/→"之后的尾段，
         # 尾段的值与区分词整体出现才算（半对/改尾诱饵不放过）。在原文上取尾段
         # （_norm 会把路径分隔符压掉，".md/.zd"这类区别就没了）②全串关键值全中
@@ -84,11 +101,8 @@ class ScriptedJudge:
             a_n = _norm(anchor.reply)
             if not a_n:
                 continue
-            refs = ["transcript:answer"]
             a_raw = re.sub(r"\s+", "", anchor.reply)
-            ans_raw = re.sub(r"\s+", "", answer)
-            ans_vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", ans_raw))
-            ans_bg = _bigrams(ans_raw)
+            vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", a_raw))
             m = list(re.finditer(r"[是在用要放→]", a_raw))
             tail = a_raw[m[-1].end():] if m else ""
             if tail:
@@ -97,17 +111,20 @@ class ScriptedJudge:
                 if ((t_bg or t_vals)
                         and (not t_bg or t_bg <= ans_bg)
                         and (not t_vals or t_vals <= ans_vals)):
-                    return JudgeOutcome(anchor.expect_verdict, 0.9, refs,
-                                        f"锚例尾段命中（{tail[:20]}）")
-            vals = set(re.findall(r"[A-Za-z0-9_~/.\-]{3,}", a_raw))
+                    return _hit_anchor(anchor.expect_verdict,
+                                       f"锚例尾段命中（{tail[:20]}）")
             if vals and vals <= ans_vals:
-                return JudgeOutcome(anchor.expect_verdict, 0.9, refs,
-                                    f"锚例值命中（{', '.join(sorted(vals))}）")
+                return _hit_anchor(anchor.expect_verdict,
+                                   f"锚例值命中（{', '.join(sorted(vals))}）")
             toks = _tokens(a_n)
             overlap = sum(1 for tok in toks if tok in _tokens(ans_n))
             if toks and overlap / len(toks) >= 0.8:
-                return JudgeOutcome(anchor.expect_verdict, 0.9, refs,
-                                    f"锚例命中（重叠率 {overlap}/{len(toks)}）")
+                # 值一致性：锚例带 ASCII 区分值（路径/版本号）而该值不在回答里
+                # ——同模板异值（"目录是 X" vs "目录是 Y"重叠 0.89），不按锚例判
+                if vals and vals - ans_vals:
+                    continue
+                return _hit_anchor(anchor.expect_verdict,
+                                   f"锚例命中（重叠率 {overlap}/{len(toks)}）")
         if exp_n and exp_n in ans_n:
             return JudgeOutcome(correct_keys[0] if correct_keys else "correct",
                                 0.95, refs, f"回答包含期望答案 {probe.expect}")
@@ -204,6 +221,7 @@ class OpenAICompatJudge:
                  temperature: float | None = None):
         self.name, self.base_url, self.model, self.api_key = name, base_url, model, api_key
         self.temperature = temperature
+        self._client = None  # httpx.Client，首个请求时建
 
     @classmethod
     def from_env(cls, which: str) -> "OpenAICompatJudge":
@@ -235,39 +253,40 @@ class OpenAICompatJudge:
         return (a, b)
 
     def _post(self, payload: dict) -> str:
-        """带持久连接与长退避的 POST：网关坏窗口实测分钟级，短退避无效。
+        """httpx 连接复用 + 预算内退避重试。
 
-        连接复用是关键（hermes 的 httpx keep-alive 稳、urllib 每请求新建
-        TLS 握手恰是坏 record mac 放大器），失败即弃连重连。
+        旧手搓 http.client 版最坏情况单题阻塞约 12 分钟（8 次退避、单次
+        上限 90s），网关坏窗口实测分钟级——现改为：连接复用（keep-alive
+        稳，避开每请求 TLS 握手的坏 record mac 放大器）+ 单题总预算
+        JUDGE_TOTAL_BUDGET（默认 300s）内重试，预算耗尽即弃、走降级路径。
         """
-        import http.client
-        import threading
-        import time as _t
-        import urllib.parse
+        import httpx
         _rate_limit()
-        u = urllib.parse.urlparse(self.base_url)
-        host, port = u.hostname, u.port or 443
-        path = (u.path.rstrip("/") or "") + "/chat/completions"
-        body = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json",
-                   "Authorization": f"Bearer {self.api_key}"}
+        budget = float(os.environ.get("JUDGE_TOTAL_BUDGET", "300"))
+        t0 = time.monotonic()
         last_err: Exception | None = None
-        for attempt in range(8):
+        if self._client is None:
+            self._client = httpx.Client(
+                base_url=self.base_url.rstrip("/"),
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=httpx.Timeout(connect=15, read=120, write=15, pool=15),
+            )
+        for attempt in range(6):
             try:
-                conn = http.client.HTTPSConnection(host, port, timeout=120)
-                conn.request("POST", path, body=body, headers=headers)
-                resp = conn.getresponse()
-                data = resp.read()
-                if resp.will_close:
-                    conn.close()
-                if resp.status != 200:
-                    conn.close()
-                    raise RuntimeError(f"HTTP {resp.status}: {data[:200]!r}")
-                return json.loads(data.decode("utf-8"))["choices"][0]["message"]["content"]
+                r = self._client.post("/chat/completions", json=payload)
+                if r.status_code != 200:
+                    # 429/5xx 退避重试；弃连保下轮干净握手
+                    self._client.close()
+                    raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]!r}")
+                return r.json()["choices"][0]["message"]["content"]
             except Exception as e:   # noqa: BLE001 TLS 断流/429/5xx 一律退避重试
                 last_err = e
-                _t.sleep(min(2 ** attempt, 90))
-        raise RuntimeError(f"judge {self.name} 重试 8 次仍失败: {last_err}")
+                remaining = budget - (time.monotonic() - t0)
+                if remaining <= 0:
+                    break
+                time.sleep(min(2 ** attempt, 30.0, remaining))
+        raise RuntimeError(
+            f"judge {self.name} 预算 {budget:g}s 内重试仍失败: {last_err}")
 
     def complete(self, prompt: str) -> str:
         payload = {"model": self.model, "messages": [{"role": "user", "content": prompt}]}
