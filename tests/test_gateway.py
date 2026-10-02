@@ -256,6 +256,97 @@ def test_compare_model_parity(tmp_path):
     assert "模型口径不一致" not in md2
 
 
+def test_gateway_tls_error_rebuilds_client(tmp_path, monkeypatch):
+    """上游 TLS 断流 → aclose 旧客户端后必须重建（复用已关客户端=整站 500，
+    全量跑实逮：一次抖动砖死网关，kylinbot 两轮全灭）。"""
+    calls = {"n": 0}
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("TLS bad record mac")
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+
+    mock = httpx.MockTransport(upstream)
+
+    app = create_gateway_app(
+        UPSTREAM, REAL_KEY, "unified-m", tmp_path / "u.jsonl",
+        client_factory=lambda: httpx.AsyncClient(base_url=UPSTREAM, transport=mock))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://gw") as c:
+            r = await c.post("/v1/chat/completions", json={"model": "x"},
+                             headers={"Authorization": "Bearer memhall-hermes"})
+            return r.status_code, r.json()
+
+    status, body = asyncio.run(go())
+    assert status == 200 and body["choices"][0]["message"]["content"] == "ok"
+    assert calls["n"] == 2  # 第一次断流，重试（新客户端）成功
+
+
+class _BrokenAdapter:
+    """send 全挂的假适配器（AgentUnavailable）。"""
+
+    name = "broken"
+
+    def reset(self):
+        pass
+
+    def send(self, session_id, message):
+        from memhall.adapters.base import AgentUnavailable
+        raise AgentUnavailable("后端不可用")
+
+    def end_session(self, sid):
+        pass
+
+    def dump_memory(self):
+        from datetime import UTC, datetime
+
+        from memhall.schema.evidence import MemorySnapshot
+        return MemorySnapshot(format="files", dumped_at=datetime.now(UTC),
+                              entries=[], raw=None)
+
+    def dump_actions(self):
+        from memhall.schema.evidence import ActionDump
+        return ActionDump(actions=[], coverage="unknown")
+
+    def fs_snapshot(self):
+        return []
+
+    def clock_shift(self, days):
+        pass
+
+    def clock_restore(self):
+        pass
+
+
+def test_adapter_failure_marks_invalid_run(tmp_path):
+    """适配器中途挂 → 部分对话落盘且判定 INVALID_RUN，不静默降级成 omission。"""
+    from memhall.runner.orchestrator import run_suite
+    from memhall.schema.models_case import MemoryCase, Phase, Step
+    case = MemoryCase(
+        case_id="broken-001", schema_version="0.1",
+        capability="persist", question_type="session_recall",
+        content_type="path", difficulty=1,
+        meta={"author": "test", "created": "2026-10-02", "source": "seed"},
+        phases=[Phase(name="inject", steps=[Step(user="我的笔记在 ~/notes/x")])],
+        probes=[{"id": "broken-001-p1", "kind": "judge", "after": "probe",
+                 "ask": "你记的我的笔记在哪？", "expect": "~/notes/x",
+                 "rubric": "答出 = 记住了",
+                 "verdict_map": {"reported": "correct", "forgot": "omission"},
+                 "anchors": []}])
+    from memhall.scoring.engine import evaluate_case
+    run_id, stores = run_suite(_BrokenAdapter(), [case], tmp_path, "broken")
+    verdicts = evaluate_case(case, stores[0], run_id)
+    assert verdicts[0].verdict.value == "invalid_run"
+    ev = (tmp_path / run_id / "cases" / "broken-001" / "evidence.jsonl") \
+        .read_text(encoding="utf-8")
+    assert "[RUNTIME_ERROR]" in ev  # 标记进证据，判定可下钻
+
+
 class _FakeChannel:
     """kylinbot 测试通道：按序返回脚本化 (rc, out, err)。"""
 

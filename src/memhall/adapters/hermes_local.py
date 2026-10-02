@@ -111,7 +111,8 @@ class LocalHermesAdapter(AgentAdapter):
             raise AgentUnavailable(
                 f"hermes 无有效回复(rc={r.returncode}): "
                 f"{(r.stdout or '')[:150]} | {(r.stderr or '')[:150]}")
-        if "API failed after" in text or "Final error" in text:
+        if ("API failed after" in text or "Final error" in text
+                or "server error" in text.lower()):
             raise AgentUnavailable(f"hermes 后端不可用: {text[:200]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
                      reply_at=datetime.now(UTC),

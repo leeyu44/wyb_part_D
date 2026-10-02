@@ -152,8 +152,21 @@ def _rule_verdict(probe: RuleProbe, store: EvidenceStore, run_id: str, seq: int)
 def evaluate_case(case: MemoryCase, store: EvidenceStore, run_id: str,
                   judges: tuple[OpenAICompatJudge, ...] | None = None
                   ) -> list[Verdict]:
+    # case 级检查：任何一步的回复带 [RUNTIME_ERROR]（适配器挂掉）→ 整 case
+    # 运行无效，不能静默降级成 omission/human_review（probe 可能根本没问）
+    poisoned = any("[RUNTIME_ERROR]" in (r.get("text") or "")
+                   for ev in store.by_type(EvidenceType.DIALOGUE)
+                   for r in ev.payload.get("replies", []))
     out: list[Verdict] = []
     for i, probe in enumerate(case.probes, start=1):
+        if poisoned:
+            out.append(Verdict(
+                verdict_id=f"v-{i:04d}", probe_id=probe.id,
+                case_id=probe.id.rsplit("-", 1)[0], run_id=run_id,
+                verdict=VerdictValue.INVALID_RUN, confidence=0.0,
+                decided_by=DecidedBy.RULE, evidence_refs=["transcript:answer"],
+                explanation="运行无效：被测智能体后端不可用，不计入分母"))
+            continue
         if isinstance(probe, RuleProbe):
             out.append(_rule_verdict(probe, store, run_id, i))
         else:

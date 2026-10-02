@@ -94,7 +94,9 @@ class HermesAdapter(AgentAdapter):
         text = _strip_tui(out)
         if rc != 0 and not text:
             raise AgentUnavailable(f"hermes 调用失败({rc})")
-        if "API failed after" in text or "Final error" in text:
+        # hermes 后端故障文案（已实测两种）：不让错误文本混进答案被当行为评分
+        if ("API failed after" in text or "Final error" in text
+                or "server error" in text.lower()):
             raise AgentUnavailable(f"hermes 后端不可用: {text[:200]}")
         return Reply(session_id=session_id, text=text,
                      sent_at=sent, reply_at=now_utc(),

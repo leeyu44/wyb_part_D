@@ -137,11 +137,13 @@ class CaseRunner:
                                                    "case": self.case.case_id,
                                                    "msg": str(e)})
                         break
-                if getattr(self, "_runtime_error", None):
-                    break
+                # 部分对话也落盘：[RUNTIME_ERROR] 回复标记进证据，判卷层据此
+                # 标 INVALID_RUN——适配器中途挂掉不能静默降级成 omission
                 self._collect(phase.name, EvidenceType.DIALOGUE,
                               {"messages": messages,
                                "replies": [r.model_dump(mode="json") for r in replies]})
+                if getattr(self, "_runtime_error", None):
+                    break
                 # inject 后加采记忆快照（写入时机测试的数据源）
                 if phase.name == "inject":
                     snap = self.adapter.dump_memory()

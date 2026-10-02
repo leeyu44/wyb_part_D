@@ -49,8 +49,20 @@ def _agent_tag(bearer: str) -> str:
 
 def create_gateway_app(upstream: str, api_key: str, model: str,
                        log_path: Path | None = None,
-                       client: httpx.AsyncClient | None = None) -> FastAPI:
-    """网关 FastAPI 应用（cli `memhall gateway` 挂 uvicorn；测试注入 MockTransport）。"""
+                       client: httpx.AsyncClient | None = None,
+                       client_factory=None) -> FastAPI:
+    """网关 FastAPI 应用（cli `memhall gateway` 挂 uvicorn；测试注入替身）。
+
+    client：完整客户端替身（MockTransport 直挂）；
+    client_factory：重建路径的替身工厂（TLS 断流重建客户端的回归测试用）。"""
+
+    def _new_client() -> httpx.AsyncClient:
+        if client_factory is not None:
+            return client_factory()
+        return httpx.AsyncClient(
+            base_url=upstream.rstrip("/"),
+            timeout=httpx.Timeout(connect=15, read=300, write=30, pool=15))
+
     log_path = log_path or default_log_path()
 
     @asynccontextmanager
@@ -63,10 +75,7 @@ def create_gateway_app(upstream: str, api_key: str, model: str,
                   openapi_url=None, lifespan=lifespan)
     own_client = client is None
     if client is None:
-        client = httpx.AsyncClient(
-            base_url=upstream.rstrip("/"),
-            timeout=httpx.Timeout(connect=15, read=300, write=30, pool=15),
-        )
+        client = _new_client()
     state: dict = {"n_req": 0}
 
     def _record(tag: str, asked: str, usage: dict | None, ms: float, status: int) -> None:
@@ -104,22 +113,29 @@ def create_gateway_app(upstream: str, api_key: str, model: str,
             # 注入 include_usage，让上游在流尾补 usage 块（记账数据源）
             payload.setdefault("stream_options", {}).setdefault("include_usage", True)
         t0 = time.monotonic()
-        # 上游腿 TLS 断流（bad record mac 坏窗口）重试：弃整个连接池重握手，
-        # 同 judge._post 的对策；重试只覆盖建连/发请求阶段，流中途断不重发
+        # 上游腿 TLS 断流（bad record mac 坏窗口）重试：aclose 是永久关闭，
+        # 必须弃旧建新客户端（复用已关客户端=整站 500，全量跑实逮）；
+        # 重试只覆盖建连/发请求阶段，流中途断不重发
+        nonlocal client
         up = None
         last_err: Exception | None = None
         for attempt in range(3):
+            c = client
+            assert c is not None  # init 已兜底
             try:
-                up_req = client.build_request(
+                up_req = c.build_request(
                     "POST", "/chat/completions", json=payload,
                     headers={"Authorization": f"Bearer {api_key}",  # 真凭据只在这出现
                              "Content-Type": "application/json"})
-                up = await client.send(up_req, stream=stream)
+                up = await c.send(up_req, stream=stream)
                 break
-            except httpx.HTTPError as e:
+            except Exception as e:  # noqa: BLE001 TLS 断流常以裸 ssl.SSLError 冒出（实测）
                 last_err = e
                 log.warning("网关上游断流（第 %d 次）: %s", attempt + 1, e)
-                await client.aclose()  # 坏连接不留在池里放大问题
+                if client is not None:
+                    await client.aclose()
+                if own_client:
+                    client = _new_client()
                 await asyncio.sleep(0.5 * (attempt + 1))
         if up is None:
             _record(tag, asked, None, (time.monotonic() - t0) * 1000, 599)
@@ -160,8 +176,9 @@ def create_gateway_app(upstream: str, api_key: str, model: str,
     async def _proxy(request: Request):
         try:
             return await _proxy_inner(request)
-        except Exception as e:  # 兜底：意外异常不带信息地 500 黑盒
+        except Exception as e:  # 兜底：意外异常不当 500 黑盒
             log.exception("网关内部错误")
+            _record("unknown", "", None, 0.0, 500)  # 砖死也要在账上可见
             return JSONResponse({"error": {"message": f"gateway internal: {e}",
                                            "type": "gateway_internal_error"}},
                                 status_code=500)
