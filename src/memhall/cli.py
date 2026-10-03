@@ -111,7 +111,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     if est:
         req = f"、约 {est['requests']} 次请求" if est.get("requests") else ""
         print(f"⏳ 预计消耗 ≈ {fmt_tokens(est['total_tokens'])} tokens{req}"
-              f"（按 {est['basis_runs']} 轮历史均摊，判卷流量另计）")
+              f"（按 {est['basis_runs']} 轮历史均摊，判卷流量另计）", flush=True)
 
     run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter,
                                case_source=args.cases)
