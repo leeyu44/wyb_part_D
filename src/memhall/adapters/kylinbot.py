@@ -137,8 +137,14 @@ class KylinBotAdapter(AgentAdapter):
                      sent_at=sent, reply_at=now_utc(),
                      latency_ms=elapsed_ms(t0), token_usage=None)
 
-    def end_session(self, session_id: str) -> None:
+    def end_session(self, sid: str) -> None:
         pass  # agent 单发模式每次独立进程，无长会话
+
+    def version_info(self) -> str | None:
+        rc, out, _ = self.ch.run(
+            "kylin-bot --version 2>/dev/null || kylin-bot -V 2>/dev/null", timeout=30)
+        line = out.strip().splitlines()[0] if out.strip() else ""
+        return line or None
 
     def dump_memory(self) -> MemorySnapshot:
         script = "python3 -c '" + _DUMP_SRC.replace("'", "'\\''") + "'"

@@ -123,6 +123,15 @@ class LocalClaudeAdapter(AgentAdapter):
     def end_session(self, session_id: str) -> None:
         pass  # -p oneshot 每次独立进程，会话隔离天然成立
 
+    def version_info(self) -> str | None:
+        try:
+            exe = self._resolve_exe()
+        except Exception:  # noqa: BLE001 未装/未探测到 = 无版本元数据
+            return None
+        from memhall.adapters.base import cli_version
+        return cli_version([exe, "--version"])
+
+
     def dump_memory(self) -> MemorySnapshot:
         """auto-memory（按项目路径编码分目录）+ 工作区 CLAUDE.md 两处合并。"""
         entries: list[MemoryEntry] = []

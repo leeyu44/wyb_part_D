@@ -181,6 +181,7 @@ def create_app() -> FastAPI:
             "qwen-local": {"label": "qwen code（本机）", "ok": bool(find_cli(*ADAPTER_CLI["qwen"]))},
             "hermes": {"label": "hermes（VM 真机）", "ok": vm},
             "kylinbot": {"label": "kylinbot（VM 真机）", "ok": vm},
+            "openclaw": {"label": "openclaw（VM 真机）", "ok": vm},
         }
 
     @app.get("/api/meta")
@@ -215,6 +216,24 @@ def create_app() -> FastAPI:
         return {"sets": sets if found else [{"id": "cases/full", "label": "种子题库（默认）"}]}
 
     # ---------- 运行会话 ----------
+    @app.get("/api/estimate")
+    def estimate(adapter: str, cases: str) -> dict:
+        """跑前 token 预估：按该智能体历史 run 的网关记账均摊（弹窗数据源）。"""
+        from memhall.cli import load_case_set
+        from memhall.cost import estimate as estimate_fn
+        try:
+            n = len(load_case_set(cases))
+        except Exception:
+            return {"available": False, "note": "用例集加载失败"}
+        if not n:
+            return {"available": False, "note": "用例集为空"}
+        est = estimate_fn(adapter, n, _runs_root())
+        if not est:
+            return {"available": False, "n_cases": n,
+                    "note": "该智能体暂无网关记账历史，首跑后自动校准"
+                            "（直连/mock 模式无记账）"}
+        return {"available": True, **est}
+
     @app.post("/api/start")
     async def start(body: dict) -> dict:
         if session.active:

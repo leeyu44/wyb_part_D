@@ -8,6 +8,7 @@ MockAdapter 在 adapters/mock.py —— 全队第一个能跑的适配器，也�
 from __future__ import annotations
 
 import os
+import subprocess
 from abc import ABC, abstractmethod
 
 from memhall.schema.evidence import ActionDump, MemorySnapshot, Reply
@@ -40,6 +41,17 @@ class MemoryNotDumpable(AdapterError):
     """记忆无法导出（纯云端记忆）-> 该 case 降级纯行为判定。"""
 
 
+def cli_version(args: list[str]) -> str | None:
+    """跑 `<exe> --version` 取第一行（版本探测尽力而为，失败返回 None）。"""
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=30,
+                             creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = (out.stdout or out.stderr or "").strip().splitlines()
+    return lines[0] if lines else None
+
+
 # ---------- 基类 ----------
 
 class AgentAdapter(ABC):
@@ -70,6 +82,12 @@ class AgentAdapter(ABC):
     @abstractmethod
     def dump_actions(self) -> ActionDump:
         """导出 reset 以来的操作记录。来源优先级：MCP 日志 > 智能体日志 > auditd。"""
+
+    def version_info(self) -> str | None:
+        """被测智能体版本标识（进 manifest/report，可复现性元数据）。
+
+        尽力而为：探测失败返回 None，不阻塞评测。"""
+        return None
 
     def fs_snapshot(self) -> list[str] | None:
         """被测环境用户区文件清单（fs_diff 证据源）。None = 不支持，runner 跳过，

@@ -36,8 +36,9 @@ def test_version_is_not_stale_constant():
 # ---------- T04 适配器注册表 ----------
 
 def test_adapter_registry_covers_all_names():
-    assert set(ADAPTERS) == {"mock", "hermes", "kylinbot", "hermes-local",
-                             "claude-local", "qwen-local", "opencode"}
+    assert set(ADAPTERS) == {"mock", "hermes", "kylinbot", "openclaw",
+                             "hermes-local", "claude-local", "qwen-local",
+                             "opencode"}
 
 
 def test_create_adapter_mock_and_unknown():

@@ -122,7 +122,7 @@ LOCAL_AGENTS: list[tuple[str, list[str], list[str], str, str]] = [
     ("cursor-agent", ["cursor-agent", "cursor"], ["~/.cursor"], "", "cli"),
     ("copilot-cli", ["copilot"], ["~/.copilot"], "", "cli"),
     ("codebuddy", ["codebuddy"], ["~/.codebuddy"], "", "cli"),
-    ("openclaw", ["openclaw"], ["~/.openclaw"], "", "cli"),
+    ("openclaw", ["openclaw", "~/.local/bin/openclaw"], ["~/.openclaw"], "openclaw", "cli"),
     ("qoder", ["qoder"], ["~/.qoder"], "", "cli"),
     ("qoderwork", ["qoderwork"], ["~/.qoderwork"], "", "cli"),
     ("qwenwork", ["qwenwork"], ["~/.QwenWorkCN"], "", "cli"),

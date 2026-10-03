@@ -61,10 +61,12 @@ uv run memhall ui            # Web UI（本地 127.0.0.1:8300，自动开浏览�
 # 一轮评测（命令行）
 uv run memhall run -a mock -c cases/full -o runs      # Mock 适配器，离线零成本
 uv run memhall run -a hermes -c cases/full -o runs    # 真智能体（SSH 驱动 VM）
-# 适配器：mock / hermes / kylinbot（VM 内）/
+# 适配器：mock / hermes / kylinbot / openclaw（VM 内）/
 #         hermes-local / claude-local / qwen-local / opencode（本机）
 # 产物：runs/<run_id>/{manifest.json, verdicts.jsonl, metrics.json, radar.png, report.md}
 #       runs/<run_id>/cases/<case_id>/evidence.jsonl（每条判定可下钻证据哈希）
+#       manifest 记被测智能体版本 / 模型口径 / token 记账，report.md 头部可见
+# 开跑前会按该智能体历史网关记账预估本轮 token 消耗（CLI 提示行 / UI 确认弹窗）
 
 uv run memhall report runs/<run_id>     # 对已有 run 重渲染报告（缺 verdicts 时从证据重放）
 uv run memhall compare runs/A runs/B    # 对比雷达 + 判定翻转明细（两智能体/两次运行）
@@ -89,6 +91,19 @@ uv run memhall run -a mock --judge dual
 
 uv run pytest tests/ -q                # 测试（含端到端冒烟）
 ```
+
+### 第三方使用（自带已装好的智能体）
+
+前提只有一个：目标智能体已安装且配好了你自己的 key。麟阁不内置任何凭据。
+
+1. `pip install -e .`（或装 deb/exe），`memhall doctor` 体检——自动发现本机已装智能体；
+2. 在 `.env` 给被测智能体配 LLM 端点之一：
+   - 直连（你的 key）：`AGENT_LLM_BASE_URL/KEY/MODEL`（OpenAI 兼容端点）；
+   - 或统一网关（推荐做对照实验）：`GATEWAY_UPSTREAM_*` + `GATEWAY_URL`；
+3. `memhall run -a <适配器> -c cases/full` 开跑。VM 型适配器另需 `VM_HOST/VM_USER/VM_PASS`。
+
+机器相关的默认值全部可环境变量覆盖（见 .env.example）；沙箱一律建在
+`~/.memhall*/` 下，不碰智能体的真实配置与真实记忆。
 
 判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁），未决判定单列 HUMAN_REVIEW 待人工复核，不计入运行无效。
 

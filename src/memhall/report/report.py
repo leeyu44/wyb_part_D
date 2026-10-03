@@ -22,7 +22,22 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
     lines: list[str] = []
     lines.append(f"# 麟阁 MemHall 评测报告 · {run_id}")
     lines.append("")
-    lines.append(f"- 被测智能体：`{manifest.get('adapter', '?')}`（适配器模式）")
+    lines.append(f"- 被测智能体：`{manifest.get('adapter', '?')}`（适配器模式）"
+                 + (f"　版本：`{manifest['agent_version']}`"
+                    if manifest.get("agent_version") else ""))
+    mb = manifest.get("model_backend") or {}
+    if mb.get("mode") == "gateway":
+        lines.append(f"- 模型口径：统一网关 `{mb.get('model', '?')}`"
+                     f"（所有被测流量经 memhall gateway 强制改写）")
+    elif mb.get("mode") == "direct" and mb.get("lanes"):
+        lanes = "、".join(f"{v.get('model', '?')}@{k}"
+                         for k, v in mb["lanes"].items())
+        lines.append(f"- 模型口径：直连（{lanes}）")
+    tu = manifest.get("token_usage")
+    if tu:
+        lines.append(f"- Token 消耗（网关记账）：{tu.get('total_tokens', 0):,}"
+                     f" tokens / {tu.get('requests', 0)} 次请求"
+                     f"（错误 {tu.get('errors', 0)}）")
     lines.append(f"- 代码版本：`{manifest.get('git_hash', '?')}`　用例数："
                  f"{len(manifest.get('cases', []))}　探测点：{metrics['n_probes_total']}")
     lines.append(f"- 总体正确率：**{metrics['overall_score']:.1%}**"

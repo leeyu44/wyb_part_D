@@ -17,6 +17,7 @@ ADAPTERS: dict[str, str] = {
     "mock": "memhall.adapters.mock:MockAdapter",
     "hermes": "memhall.adapters.hermes:HermesAdapter",
     "kylinbot": "memhall.adapters.kylinbot:KylinBotAdapter",
+    "openclaw": "memhall.adapters.openclaw:OpenClawAdapter",
     "hermes-local": "memhall.adapters.hermes_local:LocalHermesAdapter",
     "claude-local": "memhall.adapters.claude_local:LocalClaudeAdapter",
     "qwen-local": "memhall.adapters.qwen_local:LocalQwenAdapter",

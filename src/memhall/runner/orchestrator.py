@@ -20,6 +20,7 @@ import yaml
 
 from memhall import __version__
 from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter
+from memhall.cost import summarize, usage_delta, usage_snapshot
 from memhall.schema.evidence import (
     Evidence,
     EvidencePhase,
@@ -230,6 +231,7 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
     log.info("评测开始: %s × %d 用例 × %d 探测点 → %s", adapter_name, len(cases),
              sum(len(c.probes) for c in cases), run_dir)
     stores: list[EvidenceStore] = []
+    usage_before = usage_snapshot()
     for i, case in enumerate(cases):
         log.info("[%d/%d] %s 开跑", i + 1, len(cases), case.case_id)
         t0 = time.monotonic()
@@ -256,6 +258,19 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
         "cases": [c.case_id for c in cases],
         "n_probes_total": sum(len(c.probes) for c in cases),
     }
+    # 网关记账差值（直连模式/无记账文件时为 None，不落键）
+    token_usage = summarize(usage_delta(usage_before, usage_snapshot()))
+    if token_usage:
+        manifest["token_usage"] = token_usage
+        log.info("本轮网关记账: %d 请求 / %d tokens",
+                 token_usage["requests"], token_usage["total_tokens"])
+    # 被测智能体版本（报告可复现性元数据；探测失败静默跳过）
+    try:
+        version = adapter.version_info()
+    except Exception:  # noqa: BLE001 元数据探测不阻塞评测
+        version = None
+    if version:
+        manifest["agent_version"] = version
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

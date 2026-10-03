@@ -106,6 +106,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.judge == "dual" and judges is None:
         print("缺少 JUDGE_A_ 环境变量，回退脚本判卷", file=sys.stderr)
 
+    from memhall.cost import estimate, fmt_tokens
+    est = estimate(args.adapter, len(cases), Path(args.out))
+    if est:
+        req = f"、约 {est['requests']} 次请求" if est.get("requests") else ""
+        print(f"⏳ 预计消耗 ≈ {fmt_tokens(est['total_tokens'])} tokens{req}"
+              f"（按 {est['basis_runs']} 轮历史均摊，判卷流量另计）")
+
     run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter,
                                case_source=args.cases)
     run_dir = Path(args.out) / run_id

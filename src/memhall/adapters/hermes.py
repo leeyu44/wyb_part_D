@@ -105,6 +105,11 @@ class HermesAdapter(AgentAdapter):
     def end_session(self, session_id: str) -> None:
         pass  # oneshot 每次独立进程，会话隔离天然成立
 
+    def version_info(self) -> str | None:
+        rc, out, _ = self.ch.run(f"{HERMES_BIN} --version 2>/dev/null", timeout=30)
+        line = out.strip().splitlines()[0] if out.strip() else ""
+        return line or None
+
     def dump_memory(self) -> MemorySnapshot:
         cmd = (f"for f in {MEM_DIR}/MEMORY.md {MEM_DIR}/USER.md; do "
                f"[ -f $f ] && echo \"=== $f\" && cat $f; done")
