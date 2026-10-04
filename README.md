@@ -20,6 +20,7 @@ A Memory Benchmark for Agents on the openKylin Ecosystem
 | [docs/contracts/](docs/contracts/README.md) | **契约** | 接口单一真相源（adapter / case / evidence-verdict） |
 | [docs/dataset-card.md](docs/dataset-card.md) | **正式** | 用例库数据集说明卡 |
 | [docs/engineering-tasks.md](docs/engineering-tasks.md) | 过程 | 工程化整改队列与进度 |
+| [docs/review-tasks.md](docs/review-tasks.md) | 过程 | 评测设计专项排查（R01–R24）与评分口径 v2 |
 | [okim-bench/README.md](okim-bench/README.md) | 归档 | W1 评分原型（权威实现在 src/memhall/scoring） |
 | [docs/](docs/) 其余 | 过程稿 | 调研、阶段性环境记录、原型设计稿（头部有归档标注） |
 
@@ -43,7 +44,8 @@ memhall/
 └── tests/           # 端到端与适配器测试
 ```
 
-> ※ 正式口径 = **full + chains**；**heldout 为不可见防背题池**（`scripts/gen_cases.py --seed 4210 --out cases/heldout --prefix h` 评测时现场生成，题目文本不入公开仓库，seed 公布保复现）；全量跑 ≥2 轮报 mean±std（`memhall aggregate`）。
+> ※ 正式口径 = **full + chains**；**heldout 为不可见防背题池**（`scripts/gen_cases.py --seed 4210 --out cases/heldout --prefix h` 评测时现场生成，题目文本不入公开仓库，seed 公布保复现）；全量跑 ≥2 轮报 mean±std + bootstrap 95% CI（`memhall aggregate`）。
+> held-out 威胁模型：seed+生成器公开 = 题目可重构——防训练污染有效，防定向作弊无效；防"背题库"不防"背题型"（详见 dataset-card §8）。
 
 ## 使用
 
@@ -105,7 +107,9 @@ uv run pytest tests/ -q                # 测试（含端到端冒烟）
 机器相关的默认值全部可环境变量覆盖（见 .env.example）；沙箱一律建在
 `~/.memhall*/` 下，不碰智能体的真实配置与真实记忆。
 
-判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁），未决判定单列 HUMAN_REVIEW 待人工复核，不计入运行无效。
+判定五态：正确 / 遗漏 / 混淆 / 错误持久化 / 错误复用；规则判不了的才升级语义判卷（脚本判卷 → 双 LLM judge 交叉仲裁，锚例随提示词下发，仲裁评委 A/B 轮值），未决判定单列 HUMAN_REVIEW 待人工复核，不计入运行无效。
+
+评分口径 v2（2026-10-04，docs/review-tasks.md）：探测点分 **score / diagnostic** 两层——存储态断言（memory.*）与 actions 断言只进故障定位表（没存 / 存了没用上 / 存了但内容错 / 该删没删），不进六维分母；canary 一律教学时点判（probe 段删除洗白不了 over_persist）；无有效探测的维输出"未测"不画轴；报告附"未决按错计"保守下界与按用例等权总分。旧 run 可 `memhall report runs/<id>` 按新口径重渲染。
 
 评测收尾可选 UKUI 桌面通知（notify-send）并自动弹出雷达图（xdg-open）。
 
@@ -148,5 +152,7 @@ Apache-2.0（见 [LICENSE](LICENSE)）
 v0.2.1（2026-09-29）：Web UI 评测直播、`compare` 对比 CLI、系统级测试（重启/拨钟/多用户/断网，hermes 真机 4/4）、claude/qwen 本机适配器（沙箱隔离配置目录）、UKUI 桌面通知；Mock v2 缺陷注入基线（措辞解耦后总分 62%，六维显式缺陷模式表）。里程碑见 team-plan.md。
 
 2026-10-02：评测口径对齐主流基准——不可见 held-out 防背题池（seed 4210 现场生成）、N 轮方差口径（`memhall aggregate` 出六维 mean±std）、六会话长链 chain-004（对齐 LongMemEval/LoCoMo 的长程会话深度）；CI 平台矩阵（ubuntu/windows × py3.11/3.12）+ 平台分级表；deb 补 UKUI 菜单项。
+
+2026-10-04：**评分口径 v2（基准设计专项排查 R01–R24，docs/review-tasks.md）**——探测点 score/diagnostic 分流（故障定位四态表落地）、canary 教学时点判、actions 证据覆盖门禁、未决保守下界 + 按用例等权总分、逐探测点 bootstrap 95% CI + 对比符号检验、判卷锚例进提示词 + 仲裁轮值、runner 单 case 异常隔离 + reset 彻底性防线、大容量注入题（persist-008/recall-008：16 条教 5 条考，检索竞争）。
 
 双智能体对比（W2，09-28）：Hermes 81.6% vs KylinBot 61.5%（39 探测点全有效），判卷质检金标准 10/10。

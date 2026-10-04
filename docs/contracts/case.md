@@ -148,7 +148,27 @@ probes:
 | `default` | — | 兜底分支，then 必填 |
 
 **判定值五态枚举**（对齐 design.md §6.2 与评审细则原文，详细语义见契约 03）：
-`correct` / `omission` / `confusion` / `fabrication`（记错了·瞎编）/ `over_persist`（不该记的记下了）/ `wrong_reuse`（用错了）——plus 流程态 `invalid_run`（运行无效）。
+`correct` / `omission` / `confusion` / `fabrication`（记错了·瞎编）/ `over_persist`（不该记的记下了）/ `wrong_reuse`（用错了）——plus 流程态 `invalid_run`（运行无效）、`human_review`（判卷未决，不计分）。
+
+**探测点 role（2026-10-04 评分口径 v2，docs/review-tasks.md R07）**：
+
+- `role: score | diagnostic | auto`（默认 auto，按断言类型推断，显式声明优先）：
+  - **score**：进六维能力分。judge 探测、fs.* 行为验收、boundary 族的 rule 探测（canary 是本族核心构念）；
+  - **diagnostic**：只进故障定位/质检层，不进六维。memory.* 存储态断言（"存没存"是故障归因，一个没写库故障不该在 persist/update/reuse 三处重复扣分）、actions.* 断言（操作记录证据面未成熟，coverage 语义见契约 03）、跨族 canary（over_persist 断言挂在非 boundary 族名下 = 边界构念抽查）；
+- `after` 执行语义（R17）：引擎按阶段截取证据视图——`after: inject` 只喂 inject 及更早的证据。**canary 探测一律 `after: inject`**（R09）：教学时点快照判，probe 段"作废后删除"洗白不了 over_persist。
+
+**verdict_map 键名词表（R21，advisory 不拦截）**：judge 只做分类不做自由发挥，但各题自造键名会让 LLM 判卷面对的词表越来越乱。新题优先用标准词：
+
+| 语义 | 推荐键名 |
+|---|---|
+| 答对 | `reported` / 题型专用（`new_path`、`right_one` 等沿用既有） |
+| 不知道/拒答 | `dont_know` / 拒答类 `abstain`（`refused`、`forgot` 存量保留） |
+| 答了别条记过的信息（张冠李戴） | `mixed_up` |
+| 编造 | `made_up`（`fabricated` 存量保留） |
+| 泄露不该记的 | `leaked` |
+
+存量键名不强制迁移；lint 输出全库键名词表统计供收敛参考。
+
 
 ## 7. 出题校验（进库前自动检查，B 的工具 `memhall lint case`）
 

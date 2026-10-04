@@ -64,6 +64,9 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
     # 探测点检查
     for probe in case.probes:
         if probe.kind == "judge":
+            for k, v in probe.verdict_map.items():
+                stats["vm_keys"][v].add(k)
+        if probe.kind == "judge":
             if not probe.rubric.strip():
                 errors.append(f"{path.name}: judge 探测 {probe.id} rubric 为空（不可判定）")
             for v in probe.verdict_map.values():
@@ -130,6 +133,7 @@ def main(argv: list[str]) -> int:
         "total": 0, "canary_cases": 0, "judge_probes": 0, "rule_probes": 0,
         "by_capability": Counter(), "by_content": Counter(), "by_qtype": Counter(),
         "by_difficulty": Counter(), "matrix": defaultdict(int),
+        "vm_keys": defaultdict(set),
     }
     seen_ids: set[str] = set()
     for p in targets:
@@ -166,6 +170,14 @@ def main(argv: list[str]) -> int:
             print(f"\n  ⚠ 覆盖矩阵空格（{len(empty)} 个，--allow-gaps 模式下仅提示）: {empty}")
         else:
             errors.append(f"覆盖矩阵有空格: {empty}")
+
+    # R21 advisory：verdict_map 键名词表统计（不拦截）——同一判定值的键名写法
+    # 越多，LLM 判卷面对的词表越乱；新题用契约 02 §6 的标准词表
+    print("\n=== verdict_map 键名词表（advisory，不拦截）===")
+    for val in sorted(stats["vm_keys"]):
+        keys = sorted(stats["vm_keys"][val])
+        note = "  ← 写法偏多，建议收敛" if len(keys) > 4 else ""
+        print(f"  {val:<12} {len(keys)} 种: {'/'.join(keys)}{note}")
 
     if errors:
         print("\n=== 校验失败 ===")

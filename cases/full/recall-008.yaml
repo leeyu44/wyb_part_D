@@ -1,0 +1,143 @@
+# 用例：记忆调用 · 大容量注入即时检索（R06）
+# 与 persist-008 同一 16 条事实池、不同 5 问（无 confound、不隔会话）：
+# 考"写入后立刻在多条竞争记忆里检索"的即时调用，与 persist-008 构成
+# 即时/跨会话对照（两 case 合计覆盖 10/16 槽位）。
+# 注：CLI 型智能体每条消息独立进程，本族与 persist 族的机制差异见
+# dataset-card"已知局限"——检索竞争才是本题的真实压力面。
+case_id: recall-008
+schema_version: "0.1"
+capability: recall
+question_type: session_recall
+content_type: fact
+difficulty: 3
+tags: [bulk-teach, seed]
+
+meta:
+  author: A
+  created: 2026-10-04
+  source: seed
+  generator: null
+  notes: "16 条注入 × 5 问（与 persist-008 异问）；即时检索竞争"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的工牌编号是 KY-7Q4M"
+      - user: "我的座位在 3 楼东侧 07 区"
+      - user: "我的内线电话分机是 5174"
+      - user: "我的 Git 提交用户名是 kylin-okim"
+      - user: "我的终端字体用霞鹜文楷"
+      - user: "我的浏览器主页是 https://start.kylin.local"
+      - user: "我的下载目录挂载在 /mnt/data/dl"
+      - user: "我的备份硬盘标签是 BK-338"
+      - user: "我的显示器型号是 LQ-2719B"
+      - user: "我的键盘用 87 键紧凑布局"
+      - user: "我开会常订麒麟厅 402"
+      - user: "我喝咖啡只喝燕麦拿铁"
+      - user: "我通勤坐地铁二号线"
+      - user: "我的工服尺码是 175/96A"
+      - user: "我的 VPN 网关是 10.7.3.21"
+      - user: "我常用的打印机叫白泽-2F"
+  - name: probe
+    steps:
+      - user: "你记的我的内线电话分机是多少？"
+      - user: "你记的我的浏览器主页是什么？"
+      - user: "你记的我的下载目录挂载在哪？"
+      - user: "你记的我喝咖啡喝什么？"
+      - user: "你记的我常用的打印机叫什么？"
+
+probes:
+  - id: recall-008-p1
+    kind: judge
+    after: probe
+    ask: "你记的我的内线电话分机是多少？"
+    expect: "5174"
+    rubric: |
+      答出 5174 = 记住了；不知道 = 忘了；答别的分机号 = 记错了。
+      答出你记过的其他信息（张冠李戴，如 VPN 网关）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的内线分机是 5174。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: recall-008-p2
+    kind: judge
+    after: probe
+    ask: "你记的我的浏览器主页是什么？"
+    expect: "https://start.kylin.local"
+    rubric: |
+      答出 https://start.kylin.local = 记住了；不知道 = 忘了；答别的网址 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的浏览器主页是 https://start.kylin.local。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: recall-008-p3
+    kind: judge
+    after: probe
+    ask: "你记的我的下载目录挂载在哪？"
+    expect: "/mnt/data/dl"
+    rubric: |
+      答出 /mnt/data/dl = 记住了；不知道 = 忘了；答别的路径 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的下载目录挂载在 /mnt/data/dl。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: recall-008-p4
+    kind: judge
+    after: probe
+    ask: "你记的我喝咖啡喝什么？"
+    expect: "燕麦拿铁"
+    rubric: |
+      答出燕麦拿铁 = 记住了；不知道 = 忘了；答别的饮品 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你喝咖啡只喝燕麦拿铁。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: recall-008-p5
+    kind: judge
+    after: probe
+    ask: "你记的我常用的打印机叫什么？"
+    expect: "白泽-2F"
+    rubric: |
+      答出白泽-2F = 记住了；不知道 = 忘了；答别的打印机名 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你常用的打印机叫白泽-2F。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot

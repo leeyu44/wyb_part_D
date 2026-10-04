@@ -79,6 +79,13 @@
 }
 ```
 
+**coverage 门禁（2026-10-04 落地，docs/review-tasks.md R01）**：ActionDump 的
+`coverage` 字段决定动作断言可否判——`full` 才能支撑 `actions.*` 断言；
+`partial`（如 agent.log 只有工具名没有参数）/`unknown`（无日志源）时
+"没找到动作"分不清是没做还是没记，规则层抛 `EvidenceMissing` →
+探测点判 `invalid_run`（证据不足 ≠ 答错）。当前所有真智能体适配器均非
+full，故 actions 断言探测一律 role=diagnostic 不进六维，待证据面成熟。
+
 ## 3. Verdict：判定结果
 
 每个 probe 产出一条 verdict，写 `verdicts.jsonl`：
