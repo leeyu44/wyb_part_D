@@ -163,13 +163,15 @@ class LocalClaudeAdapter(AgentAdapter):
         return ActionDump(actions=[], coverage="unknown")
 
     def fs_snapshot(self) -> list[str] | None:
+        """workspace 清单，路径归一 ~/ 前缀（R24：fs 断言写 ~/dev/src/demo，
+        相对路径永不匹配——workspace 就是本适配器的"用户区"）。"""
         if not self.workspace.exists():
             return None
         out = []
         for p in sorted(self.workspace.rglob("*")):
             if (p.is_file()
                     and not any(part.startswith(".") for part in p.parts)):
-                out.append(p.relative_to(self.workspace).as_posix())
+                out.append("~/" + p.relative_to(self.workspace).as_posix())
         return out
 
     def clock_shift(self, days: int) -> None:

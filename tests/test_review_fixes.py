@@ -343,3 +343,86 @@ def test_verify_reset_fails_fast_on_leftover(tmp_path):
     # c-001 正常跑完留下记忆；c-002 reset 未清 → verify_reset 中止该 case
     assert manifest.get("failed_cases") == ["c-002"]
     assert len(stores) == 1
+
+
+# ---------- R11/R12 aggregate bootstrap CI + 每轮分母 ----------
+
+def _mk_agg_run(tmp_path: Path, run_id: str, case: MemoryCase,
+                verdict_bits: list[int]) -> Path:
+    """造一个带 verdicts.jsonl + case 快照的最小 run 目录。"""
+    import yaml
+    d = tmp_path / run_id
+    cdir = d / "cases" / case.case_id
+    cdir.mkdir(parents=True)
+    (cdir / "case.yaml").write_text(
+        yaml.safe_dump(case.model_dump(mode="json"), allow_unicode=True),
+        encoding="utf-8")
+    rows = []
+    for i, bit in enumerate(verdict_bits, 1):
+        rows.append({"verdict_id": f"v-{i:04d}", "probe_id": f"persist-x-p{i}",
+                     "case_id": case.case_id, "run_id": run_id,
+                     "verdict": "correct" if bit else "confusion",
+                     "decided_by": "rule", "confidence": 1.0, "explanation": ""})
+    (d / "verdicts.jsonl").write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    n = len(verdict_bits)
+    (d / "manifest.json").write_text(json.dumps(
+        {"adapter": "mock", "cases": [case.case_id], "run_id": run_id}), encoding="utf-8")
+    score = sum(verdict_bits) / n
+    (d / "metrics.json").write_text(json.dumps(
+        {"overall_score": score, "capability_scores": {"persist": score},
+         "n_valid": n, "n_invalid_run": 0, "n_human_review": 0}), encoding="utf-8")
+    return d
+
+
+def _judge_mini_case(cid: str) -> MemoryCase:
+    probe = JudgeProbe(kind="judge", id=f"{cid}-p1", after="probe",
+                       ask="你记的我的代码目录是哪个？", expect="~/dev",
+                       rubric="答 ~/dev=对", verdict_map={"reported": "correct",
+                                                          "forgot": "omission"})
+    return MemoryCase(
+        case_id=cid, schema_version="0.1", capability="persist",
+        question_type="cross_session_recall", content_type="path", difficulty=1,
+        meta={"author": "t", "created": "2026-10-04", "source": "seed"},
+        phases=[{"name": "probe",
+                 "steps": [{"user": "你记的我的代码目录是哪个？"}]}],
+        probes=[probe])
+
+
+def test_aggregate_bootstrap_ci(tmp_path):
+    from memhall.report.aggregate import aggregate_runs, format_table
+    case = _judge_mini_case("persist-x")
+    bits = [1, 1, 1, 0, 0, 1, 0, 1, 1, 1]
+    a = _mk_agg_run(tmp_path, "20261004-000001-mock", case, bits)
+    b = _mk_agg_run(tmp_path, "20261004-000002-mock", case, bits)
+    r = aggregate_runs([a, b], tmp_path / "agg")
+    persist = r["capabilities"]["persist"]
+    assert persist["ci95"] is not None
+    lo, hi = persist["ci95"]
+    assert lo <= persist["mean"] <= hi
+    assert persist["n_score_probes"] == 10
+    assert r["overall"]["ci95"] is not None
+    assert r["runs"][0]["n_valid"] == 10  # 每轮分母进 aggregate
+    assert "95% CI" in format_table(r)
+    # 固定 seed：两次聚合结果逐字一致（可复现）
+    r2 = aggregate_runs([a, b], tmp_path / "agg2")
+    assert r2["capabilities"]["persist"]["ci95"] == persist["ci95"]
+
+
+# ---------- R11b/R16 compare 符号检验 + 判定一致率 ----------
+
+def test_compare_sign_test_and_agreement(tmp_path):
+    from memhall.report.compare import compare_runs
+    case = _judge_mini_case("persist-x")
+    bits_a = [1, 1, 1]
+    bits_b = [0, 1, 1]
+    a = _mk_agg_run(tmp_path, "20261004-000003-mock", case, bits_a)
+    b = _mk_agg_run(tmp_path, "20261004-000004-mock", case, bits_b)
+    out = compare_runs(a, b, tmp_path / "cmp")
+    assert out["verdict_agreement_rate"] == round(2 / 3, 4)
+    assert out["flip_sign_test"]["n_flips"] == 1
+    assert out["flip_sign_test"]["to_a"] == 1   # 翻转方向：A 对 → B 错
+    assert out["flip_sign_test"]["to_b"] == 0
+    assert out["flip_sign_test"]["p_two_sided"] == 1.0  # 1 翻转不可能显著
+    text = (tmp_path / "cmp" / "compare.md").read_text(encoding="utf-8")
+    assert "判定一致率" in text and "符号检验" in text

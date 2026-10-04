@@ -216,9 +216,14 @@ class OpenClawAdapter(AgentAdapter):
         self._clock_epoch = None
 
     def fs_snapshot(self) -> list[str] | None:
-        cmd = ("find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
+        """~ 用户区 + 沙箱 workspace 子树（R24：chain 任务建在沙箱内也要被
+        fs_diff 看见——剪枝 .memhall-openclaw 只为排除配置/sqlite 噪音，
+        不能把智能体的写入面一起剪掉）。"""
+        cmd = ("(find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
                "-o -name node_modules -o -name .local -o -name .kylinbot "
                "-o -name .openclaw -o -name .memhall-openclaw -o -name .memhall \\) -prune -o "
-               "-printf '%p\\n' 2>/dev/null | sed 's|^/home/okim|~|'")
+               "-printf '%p\\n'; "
+               "find ~/.memhall-openclaw/workspace -maxdepth 6 -printf '%p\\n' 2>/dev/null) "
+               "2>/dev/null | sed 's|^/home/okim|~|' | sort -u")
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None
