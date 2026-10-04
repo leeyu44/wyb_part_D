@@ -313,6 +313,9 @@ class _BrokenAdapter:
         from memhall.schema.evidence import ActionDump
         return ActionDump(actions=[], coverage="unknown")
 
+    def verify_reset(self):
+        pass
+
     def fs_snapshot(self):
         return []
 

@@ -19,7 +19,7 @@ from memhall import __version__
 from memhall.adapters import create_adapter
 from memhall.paths import QUICK_IDS, resolve_case_dir
 from memhall.report import compute_metrics, render_radar, render_report
-from memhall.runner.orchestrator import run_suite
+from memhall.runner.orchestrator import pair_stores, run_suite
 from memhall.schema.evidence import Verdict
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.engine import evaluate_case
@@ -121,7 +121,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     manifest["model_backend"] = model_backend()
 
     verdicts = []
-    for case, store in zip(cases, stores, strict=True):
+    for case, store in pair_stores(cases, stores):
         verdicts.extend(evaluate_case(case, store, run_id, judges))
     metrics = _finish_run(run_dir, run_id, manifest, verdicts,
                           {c.case_id: c for c in cases}, judge_mode=args.judge)

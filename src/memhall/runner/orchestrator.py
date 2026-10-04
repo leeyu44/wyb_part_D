@@ -86,6 +86,9 @@ class CaseRunner:
                            allow_unicode=True, sort_keys=False),
             encoding="utf-8")
         self.adapter.reset()
+        # R02/R23：reset 彻底性防线——残留记忆会把上一个 case 的答案带进来
+        # （同问异答题库里是定向毒药），宁可本 case 中止也不静默污染
+        self.adapter.verify_reset()
         base_fs = self.adapter.fs_snapshot()
         session_id = "s-01"
         try:
@@ -231,19 +234,50 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
     log.info("评测开始: %s × %d 用例 × %d 探测点 → %s", adapter_name, len(cases),
              sum(len(c.probes) for c in cases), run_dir)
     stores: list[EvidenceStore] = []
+    failed: list[str] = []
     usage_before = usage_snapshot()
-    for i, case in enumerate(cases):
-        log.info("[%d/%d] %s 开跑", i + 1, len(cases), case.case_id)
-        t0 = time.monotonic()
-        _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
-                              "i": i + 1, "n": len(cases)})
-        runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
-                            on_event=on_event)
-        stores.append(runner.run())
-        log.info("[%d/%d] %s 完成（%.1fs）", i + 1, len(cases), case.case_id,
-                 time.monotonic() - t0)
-        if on_case_done is not None:
-            on_case_done(case.case_id, i + 1, len(cases))
+    try:
+        for i, case in enumerate(cases):
+            log.info("[%d/%d] %s 开跑", i + 1, len(cases), case.case_id)
+            t0 = time.monotonic()
+            _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
+                                  "i": i + 1, "n": len(cases)})
+            runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
+                                on_event=on_event)
+            # R23：单 case 未预期异常不再引爆整套马拉松——记录失败续跑，
+            # 已完成用例的证据/manifest 照常落盘（40 题挂 1 题不报废整轮）
+            try:
+                stores.append(runner.run())
+            except Exception:  # noqa: BLE001 隔离层必须兜住一切
+                log.exception("[%d/%d] %s 异常中止（记入 failed_cases，续跑）",
+                              i + 1, len(cases), case.case_id)
+                failed.append(case.case_id)
+                continue
+            log.info("[%d/%d] %s 完成（%.1fs）", i + 1, len(cases), case.case_id,
+                     time.monotonic() - t0)
+            if on_case_done is not None:
+                on_case_done(case.case_id, i + 1, len(cases))
+    finally:
+        _write_manifest(run_dir, run_id, adapter_name, case_source, cases,
+                        failed, usage_before, adapter)
+    log.info("评测完成: run_id=%s", run_id)
+    return run_id, stores
+
+
+def pair_stores(cases: list[MemoryCase],
+                stores: list[EvidenceStore]) -> list[tuple[MemoryCase, EvidenceStore]]:
+    """stores 与 cases 按证据内 case_id 配对（failed_cases 无 store，跳过）。"""
+    by_id: dict[str, EvidenceStore] = {}
+    for s in stores:
+        items = s.items()
+        if items:
+            by_id.setdefault(items[0].case_id, s)
+    return [(c, st) for c in cases if (st := by_id.get(c.case_id)) is not None]
+
+
+def _write_manifest(run_dir: Path, run_id: str, adapter_name: str,
+                    case_source: str, cases: list[MemoryCase], failed: list[str],
+                    usage_before, adapter: AgentAdapter) -> None:
     manifest = {
         "run_id": run_id,
         "tool": "memhall",
@@ -258,6 +292,8 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
         "cases": [c.case_id for c in cases],
         "n_probes_total": sum(len(c.probes) for c in cases),
     }
+    if failed:
+        manifest["failed_cases"] = failed
     # 网关记账差值（直连模式/无记账文件时为 None，不落键）
     token_usage = summarize(usage_delta(usage_before, usage_snapshot()))
     if token_usage:
@@ -274,5 +310,3 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    log.info("评测完成: run_id=%s", run_id)
-    return run_id, stores

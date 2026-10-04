@@ -17,7 +17,7 @@ import os
 import re
 import time
 
-from memhall.adapters.base import AgentAdapter, AgentUnavailable
+from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable
 from memhall.adapters.remote import SshChannel, b64, elapsed_ms, now_utc
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
@@ -67,9 +67,19 @@ class HermesAdapter(AgentAdapter):
             f"rm -rf {' '.join(EVAL_WORKDIRS)} && echo ok")
         if rc != 0:
             raise RuntimeError(f"Hermes 记忆清零失败: {err.strip()[:300]}")
+        # 会话转录候选目录一并清（R02：任何"从历史会话回忆"的检索路径都会把
+        # 上一个 case 的答案带进下一个 case；路径下次 VM 联调核实，不存在时无害）
+        self.ch.run("rm -rf ~/.hermes/sessions ~/.hermes/history* 2>/dev/null; true")
         # 记 agent.log 偏移：dump_actions 只解析本 case 增量
         rc, out, _ = self.ch.run(f"wc -c < {AGENT_LOG} 2>/dev/null || echo 0")
         self._log_offset = int(out.strip() or 0)
+
+    def verify_reset(self) -> None:
+        """memories 目录必须整目录空——dump 只读两个 md，残留即污染（R02）。"""
+        rc, out, _ = self.ch.run(f"ls -A {MEM_DIR} 2>/dev/null | head -3")
+        if rc == 0 and out.strip():
+            raise AdapterError(
+                f"hermes reset 后 {MEM_DIR} 仍有残留：{out.strip()[:120]}")
 
     def send(self, session_id: str, message: str) -> Reply:
         # 凭据与消息都走 stdin（base64），命令行零明文：VM 内 ps/history

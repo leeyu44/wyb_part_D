@@ -281,7 +281,8 @@ def create_app() -> FastAPI:
                                            on_event=emit)
                 emit({"type": "phase", "msg": "评测完成，开始判卷…"})
                 verdicts = []
-                for case, store in zip(cases, stores, strict=True):
+                from memhall.runner.orchestrator import pair_stores
+                for case, store in pair_stores(cases, stores):
                     verdicts.extend(evaluate_case(case, store, run_id, judges))
                     if session.stop:
                         break

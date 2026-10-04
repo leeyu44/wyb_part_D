@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
@@ -40,7 +41,11 @@ def _rate_limit() -> None:
 
 @dataclass
 class JudgeOutcome:
-    """判卷结果：key 为 verdict_map 的 key；None 表示无法判定。"""
+    """判卷结果：key 为 verdict_map 的 key；None 表示无法判定。
+
+    decided_by：dual 判卷时由 dual_judge 显式标注（judge_a/judge_b/
+    arbitration）；None = 沿用引擎旧推导（单判/脚本）。
+    """
 
     key: str | None
     confidence: float
@@ -51,6 +56,7 @@ class JudgeOutcome:
     judge_a_raw: str | None = None
     judge_b_raw: str | None = None
     arbitrated: bool = False
+    decided_by: str | None = None
 
 
 # ---------- 归一化 ----------
@@ -175,7 +181,8 @@ def _bigrams(s: str) -> set[str]:
 # ---------- 双 LLM judge（移植自 okim-bench，适配 verdict_map）----------
 
 # 判卷提示词版本——进 manifest，排除"判卷口径漂了"的质疑（design.md §10）
-JUDGE_PROMPT_VERSION = "2026-09-29"
+# 2026-10-04：锚例进提示词（契约 02 few-shot 防漂移首次落地）+ 仲裁轮值
+JUDGE_PROMPT_VERSION = "2026-10-04"
 
 JUDGE_PROMPT = """你是记忆评测评委。根据探测项契约与被测智能体的回答，从给定类别中选出判定。
 
@@ -183,7 +190,8 @@ JUDGE_PROMPT = """你是记忆评测评委。根据探测项契约与被测智�
 1. 只能依据回答原文，禁止臆测；评分必须引用具体证据（evidence_refs），无证据不得分。
 2. 回答与期望答案语义等价即选 correct 对应类别；命中 rubric 描述的其他情形选对应类别。
 3. "语义等价"指关键识别信息一致（实体、路径、取值），不要求逐字重复。
-4. 输出严格 JSON：{{"verdict": "<类别key>", "confidence": 0-1, "evidence_refs": ["..."], "reason": "..."}}
+4. 锚定例只作判定口径参照，不是标准答案本身；回答不必与锚例措辞一致。
+5. 输出严格 JSON：{{"verdict": "<类别key>", "confidence": 0-1, "evidence_refs": ["..."], "reason": "..."}}
 
 类别（verdict_map，key=judge输出，value=五态判定）：
 {verdict_map}
@@ -193,6 +201,9 @@ JUDGE_PROMPT = """你是记忆评测评委。根据探测项契约与被测智�
 期望答案：{expect}
 判卷标准：
 {rubric}
+
+锚定例（判定口径参照）：
+{anchors}
 
 被测智能体的回答：
 {answer}
@@ -209,6 +220,9 @@ ARBITER_PROMPT = """你是仲裁评委。两位评委对同一回答给出不同
 判卷标准：
 {rubric}
 
+锚定例（判定口径参照）：
+{anchors}
+
 被测智能体的回答：
 {answer}
 
@@ -217,6 +231,14 @@ ARBITER_PROMPT = """你是仲裁评委。两位评委对同一回答给出不同
 
 规则同上：只依据回答原文、必须给出 evidence_refs、verdict 必须是类别 key 之一。
 输出严格 JSON：{{"verdict": "...", "confidence": 0-1, "evidence_refs": ["..."], "reason": "..."}}"""
+
+
+def _anchors_block(probe: JudgeProbe) -> str:
+    """锚例渲染成 few-shot 参照块（契约 02 §6；无锚例时明示）。"""
+    if not probe.anchors:
+        return "（本题无锚例）"
+    return "\n".join(f"- 回复「{a.reply}」→ {a.expect_verdict}"
+                     for a in probe.anchors)
 
 
 class OpenAICompatJudge:
@@ -332,40 +354,75 @@ def dual_judge(probe: JudgeProbe, answer: str,
                judge_a: OpenAICompatJudge,
                judge_b: OpenAICompatJudge | None = None) -> JudgeOutcome:
     """单判（judge_b 缺省）：一票定案，无效票转人工。
-    双判：独立判 → 一致即出；不一致（或票无效）→ 仲裁；仲裁无效 → key=None。"""
+    双判：独立判 → 一致即出；一票无效 → 直接采信对侧有效票（不再多花一次
+    仲裁调用去问一个已知投不出票的评委）；双票不一致 → 仲裁——仲裁评委
+    A/B 轮值（JUDGE_ARBITER=a|b|rotate），固定由 A 复议自己的分歧会引入
+    自偏好；仲裁无效 → key=None。"""
     valid = set(probe.verdict_map.keys())
     ctx = dict(verdict_map=json.dumps(probe.verdict_map, ensure_ascii=False),
-               ask=probe.ask, expect=probe.expect, rubric=probe.rubric, answer=answer)
+               ask=probe.ask, expect=probe.expect, rubric=probe.rubric,
+               anchors=_anchors_block(probe), answer=answer)
     va = _parse(judge_a.complete(JUDGE_PROMPT.format(**ctx)), valid)
 
     if judge_b is None:
         if va:
             return JudgeOutcome(va.key, va.confidence, va.evidence_refs,
                                 f"单判: {va.reason}",
-                                judge_a=judge_a.name, judge_a_raw=va.key)
+                                judge_a=judge_a.name, judge_a_raw=va.key,
+                                decided_by="judge_a")
         return JudgeOutcome(None, 0.0, [], "单判输出无效，转人工复核",
                             judge_a=judge_a.name)
 
     vb = _parse(judge_b.complete(JUDGE_PROMPT.format(**ctx)), valid)
+
+    if va and not vb:
+        return JudgeOutcome(va.key, va.confidence, va.evidence_refs,
+                            f"评委B票无效，采信A有效票: {va.reason}",
+                            judge_a=judge_a.name, judge_b=judge_b.name,
+                            judge_a_raw=va.key, decided_by="judge_a")
+    if vb and not va:
+        return JudgeOutcome(vb.key, vb.confidence, vb.evidence_refs,
+                            f"评委A票无效，采信B有效票: {vb.reason}",
+                            judge_a=judge_a.name, judge_b=judge_b.name,
+                            judge_b_raw=vb.key, decided_by="judge_b")
 
     if va and vb and va.key == vb.key:
         return JudgeOutcome(va.key, (va.confidence + vb.confidence) / 2,
                             sorted(set(va.evidence_refs + vb.evidence_refs)),
                             f"双评委一致: {va.reason} | {vb.reason}",
                             judge_a=judge_a.name, judge_b=judge_b.name,
-                            judge_a_raw=va.key, judge_b_raw=vb.key)
-    raw = judge_a.complete(ARBITER_PROMPT.format(
+                            judge_a_raw=va.key, judge_b_raw=vb.key,
+                            decided_by="judge_a")
+    arbiter, arb_name = _pick_arbiter(judge_a, judge_b)
+    raw = arbiter.complete(ARBITER_PROMPT.format(
         **ctx,
         verdict_a=va.key if va else "无效（未按格式输出或无证据引用）",
         verdict_b=vb.key if vb else "无效（未按格式输出或无证据引用）"))
     arb = _parse(raw, valid)
     if arb:
         return JudgeOutcome(arb.key, arb.confidence, arb.evidence_refs,
-                            f"仲裁结论: {arb.reason}",
+                            f"仲裁结论（{arb_name}）: {arb.reason}",
                             judge_a=judge_a.name, judge_b=judge_b.name,
                             judge_a_raw=va.key if va else None,
-                            judge_b_raw=vb.key if vb else None, arbitrated=True)
+                            judge_b_raw=vb.key if vb else None, arbitrated=True,
+                            decided_by="arbitration")
     return JudgeOutcome(None, 0.0, [], "仲裁输出无效，转人工复核",
                         judge_a=judge_a.name, judge_b=judge_b.name,
                         judge_a_raw=va.key if va else None,
                         judge_b_raw=vb.key if vb else None, arbitrated=True)
+
+
+_arb_count = itertools.count()
+
+
+def _pick_arbiter(judge_a: OpenAICompatJudge,
+                  judge_b: OpenAICompatJudge) -> tuple[OpenAICompatJudge, str]:
+    """仲裁评委选择：JUDGE_ARBITER 环境变量（a/b/rotate，默认 rotate）。"""
+    mode = os.environ.get("JUDGE_ARBITER", "rotate").strip().lower()
+    if mode == "a":
+        pick = 0
+    elif mode == "b":
+        pick = 1
+    else:
+        pick = next(_arb_count) % 2
+    return (judge_a, "评委A") if pick == 0 else (judge_b, "评委B")

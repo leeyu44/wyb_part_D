@@ -40,19 +40,25 @@ def _store_upto(store: EvidenceStore, after: str) -> EvidenceStore:
 def _answer_for(store: EvidenceStore, ask: str) -> str:
     """取 probe 段中对该问题的回复。精确话术优先（lint 已保证 ask 与 probe 段
     某条 user 逐字一致），无精确命中再退子串；同问多次取最后一条。
-    子串双向包含曾把措辞相近的相邻探测问题配错回复——精确层先行分流。"""
-    exact = ""
-    fuzzy = ""
+    probe 段命中优先于全库命中（R22：ask 逐字复现两次时，探测答案取探测段的，
+    不被 inject/confound 段的同文句静默顶掉）；子串双向包含曾把措辞相近的
+    相邻探测问题配错回复——精确层先行分流。"""
+    exact_probe = exact_any = fuzzy_probe = fuzzy_any = ""
     for ev in store.by_type(EvidenceType.DIALOGUE):
+        in_probe = ev.phase.value == "probe"
         msgs = ev.payload.get("messages", [])
         replies = ev.payload.get("replies", [])
         # strict=False：回放的是历史 run 落盘数据，容错旧证据长度漂移
         for msg, rep in zip(msgs, replies, strict=False):
             if msg.strip() == ask.strip():
-                exact = rep.get("text", "")
+                if in_probe:
+                    exact_probe = rep.get("text", "")
+                exact_any = rep.get("text", "")
             elif _norm_pair(msg, ask):
-                fuzzy = rep.get("text", "")
-    return exact or fuzzy
+                if in_probe:
+                    fuzzy_probe = rep.get("text", "")
+                fuzzy_any = rep.get("text", "")
+    return exact_probe or exact_any or fuzzy_probe or fuzzy_any
 
 
 def _norm_pair(message: str, ask: str) -> bool:
@@ -84,7 +90,10 @@ def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: in
     if judges is not None:
         try:
             outcome = dual_judge(probe, answer, *judges)
-            decided_by = DecidedBy.ARBITRATION if outcome.arbitrated else DecidedBy.JUDGE_A
+            # dual_judge 显式标注（adopt/轮值仲裁）优先；旧推导兜底
+            decided_by = (DecidedBy(outcome.decided_by) if outcome.decided_by
+                          else (DecidedBy.ARBITRATION if outcome.arbitrated
+                                else DecidedBy.JUDGE_A))
             meta = JudgeMeta(
                 judge_a=JudgeMetaItem(model=outcome.judge_a or "",
                                       verdict=_raw_verdict(outcome.judge_a_raw, probe),
@@ -93,7 +102,7 @@ def _judge_verdict(probe: JudgeProbe, store: EvidenceStore, run_id: str, seq: in
                                       verdict=_raw_verdict(outcome.judge_b_raw, probe),
                                       agreed=(outcome.judge_a_raw == outcome.judge_b_raw)),
                 prompt_version="judge-prompt-v1",
-                arbiter="judge_a-arbiter" if outcome.arbitrated else None,
+                arbiter="arbitration（A/B 轮值，见 reason）" if outcome.arbitrated else None,
             )
         except RuntimeError as e:
             # judge 端点彻底不可用：降级脚本判卷，评测不因 judge 挂而报废

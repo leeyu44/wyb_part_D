@@ -38,7 +38,9 @@ probes:
       说不知道/没提过 = 忘了；
       答别的路径 = 记错了。
       豁免：若答的是磁盘上真实存在但用户从未告知的路径（自行探索发现），判 forgot 而非记错。
+      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
+      mixed_up: confusion
       reported: correct
       forgot: omission
       made_up: fabrication

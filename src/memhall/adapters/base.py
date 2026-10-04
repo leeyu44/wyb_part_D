@@ -104,3 +104,15 @@ class AgentAdapter(ABC):
     def clock_restore(self) -> None:
         """恢复系统时钟（case 结束由 runner 调用）。默认 no-op。"""
         return
+
+    def verify_reset(self) -> None:
+        """reset 彻底性防线（每个 case 开跑前由 runner 调用，fail fast）。
+
+        默认校验 dump_memory 为空；适配器有 dump 覆盖不到的记忆源
+        （会话转录、其他存储文件）时应覆写加强。reset 不彻底 = 跨用例
+        污染——同问异答的题库里上一个 case 的答案是定向毒药，宁可中止。"""
+        snap = self.dump_memory()
+        if snap.entries:
+            raise AdapterError(
+                f"reset 后记忆非空（{len(snap.entries)} 条残留）："
+                "跨用例污染风险，本 case 中止（docs/review-tasks.md R02）")
