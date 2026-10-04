@@ -127,11 +127,15 @@ def cmd_run(args: argparse.Namespace) -> int:
                           {c.case_id: c for c in cases}, judge_mode=args.judge)
 
     print(f"run_id: {run_id}")
-    print(f"总体正确率: {metrics['overall_score']:.1%}"
-          f"（有效 {metrics['n_valid']}/{metrics['n_probes_total']}，"
-          f"规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
+    if metrics["overall_score"] is None:
+        print("总体正确率: 未测（无有效计分探测点）")
+    else:
+        print(f"总体正确率: {metrics['overall_score']:.1%}"
+              f"（有效计分 {metrics['n_valid']}/{metrics.get('n_score_probes', '?')}"
+              f"，诊断探测 {metrics.get('n_diagnostic_probes', '?')} 不进分，"
+              f"规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
     for cap, score in metrics["capability_scores"].items():
-        print(f"  {cap:<14} {score:.0%}")
+        print(f"  {cap:<14} {'未测' if score is None else f'{score:.0%}'}")
     print(f"产物: {run_dir}")
     from memhall.notify import notify_run_done
     notify_run_done(args.adapter, metrics["overall_score"],

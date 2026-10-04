@@ -106,6 +106,7 @@ class RuleProbe(BaseModel):
     kind: Literal["rule"]
     id: str
     after: Literal["inject", "confound", "probe"] = "probe"
+    role: Literal["score", "diagnostic", "auto"] = "auto"
     check: list[RuleAssert]        # 全按序求值；default 分支的 then 必填
     evidence_ref: list[str] = Field(default_factory=list)
 
@@ -121,6 +122,7 @@ class JudgeProbe(BaseModel):
     kind: Literal["judge"]
     id: str
     after: Literal["inject", "confound", "probe"] = "probe"
+    role: Literal["score", "diagnostic", "auto"] = "auto"
     ask: str
     expect: str
     rubric: str                    # 判卷标准（B 写，C review 可判定性）
@@ -129,6 +131,39 @@ class JudgeProbe(BaseModel):
 
 
 Probe = RuleProbe | JudgeProbe
+
+
+# role 推断规则（契约 02 §6；显式声明优先，auto 按断言类型落地）：
+#   - judge 探测全是行为判定 → score；
+#   - boundary 族的 rule 探测（canary 在场/缺席）是本族核心构念 → score；
+#   - 跨族 canary（then=over_persist 的存储断言挂在别的族名下）= 边界构念抽查
+#     → diagnostic，不计入该族分数（测的不是这个族的构念）；
+#   - memory.* 存储态断言（存没存/存了几个）→ diagnostic：故障定位层，
+#     一个"没写库"故障不该在 persist/update/reuse 三处重复扣分；
+#   - actions.* 断言 → diagnostic：操作记录证据面未成熟（coverage 语义见
+#     契约 03），预留为步数/复用证据，验证成熟后可改回 score；
+#   - fs.* 断言是行为验收（任务真做了没有）→ score。
+_MEMORY_ASSERTS = {"memory.contains", "memory.not_contains",
+                   "memory.ever_contained", "memory.entry_count"}
+_ACTIONS_ASSERTS = {"actions.contains_action", "actions.count_lt"}
+
+
+def probe_role(case: MemoryCase, probe: RuleProbe | JudgeProbe) -> str:
+    """探测点角色：score 进六维分数；diagnostic 只进故障定位/质检层。"""
+    if probe.role in ("score", "diagnostic"):
+        return probe.role
+    if probe.kind == "judge":
+        return "score"
+    if case.capability == Capability.BOUNDARY:
+        return "score"
+    names = {b.assert_name for b in probe.check} - {"default"}  # 兜底分支非证据源
+    if any(b.then == "over_persist" for b in probe.check):
+        return "diagnostic"
+    if names and names <= _MEMORY_ASSERTS:
+        return "diagnostic"
+    if names and names <= _ACTIONS_ASSERTS:
+        return "diagnostic"
+    return "score"
 
 
 # ---------- 用例主体（契约 02 §1）----------

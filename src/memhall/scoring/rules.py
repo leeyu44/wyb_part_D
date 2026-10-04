@@ -200,7 +200,14 @@ def _reply_matches(args: list[Any], ev: EvidenceStore) -> bool:
 
 def _action_items(ev: EvidenceStore):
     dump = ev.latest_actions()
-    return dump.actions if dump else []
+    if dump is None:
+        raise EvidenceMissing("actions 证据缺失（适配器不支持操作记录导出）")
+    if dump.coverage != "full":
+        # coverage 语义（契约 03 §2.3）：full 才能支撑动作断言；partial/unknown
+        # 时"没找到动作"分不清是没做还是没记——证据不足 ≠ 答错，判运行无效
+        raise EvidenceMissing(
+            f"actions 证据覆盖不足（coverage={dump.coverage}），动作断言不可判")
+    return dump.actions
 
 
 @_register("actions.contains_action")

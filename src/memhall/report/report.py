@@ -39,13 +39,30 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
                      f" tokens / {tu.get('requests', 0)} 次请求"
                      f"（错误 {tu.get('errors', 0)}）")
     lines.append(f"- 代码版本：`{manifest.get('git_hash', '?')}`　用例数："
-                 f"{len(manifest.get('cases', []))}　探测点：{metrics['n_probes_total']}")
-    lines.append(f"- 总体正确率：**{metrics['overall_score']:.1%}**"
-                 f"（有效 {metrics['n_valid']}/{metrics['n_probes_total']}，"
-                 f"规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
+                 f"{len(manifest.get('cases', []))}　探测点：{metrics['n_probes_total']}"
+                 f"（计分 {metrics.get('n_score_probes', '?')}"
+                 f" / 诊断 {metrics.get('n_diagnostic_probes', '?')}）")
+    overall = metrics["overall_score"]
+    lines.append(f"- 总体正确率：**{overall:.1%}**"
+                 if overall is not None else "- 总体正确率：**未测**（无有效计分探测点）")
+    if overall is not None:
+        extra = [f"有效计分 {metrics['n_valid']}/{metrics.get('n_score_probes', '?')}"]
+        floor = metrics.get("overall_score_floor")
+        if floor is not None:
+            extra.append(f"未决按错计下界 {floor:.1%}")
+        cw = metrics.get("overall_score_case_weighted")
+        if cw is not None:
+            extra.append(f"按用例等权 {cw:.1%}")
+        lines.append(f"  （{'，'.join(extra)}，规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
+    if metrics.get("n_human_review"):
+        lines.append(f"- ⚠️ 判卷未决 {metrics['n_human_review']} 个已剔出分母"
+                     "——脚本判卷天花板，正式口径建议 `--judge dual` 收尾")
     wh = metrics.get("write_hygiene")
     if wh is not None:
         lines.append(f"- 写入卫生（不该记的记了）：{wh:.1%}")
+    si = metrics.get("stale_info_rate")
+    if si is not None:
+        lines.append(f"- 过期信息调用率（更新维拿旧值答新题）：{si:.1%}")
     jm = manifest.get("judge", {})
     if jm:
         model = f"（{jm.get('model_a', '')}）" if jm.get("model_a") else ""
@@ -62,9 +79,26 @@ def render_report(run_dir: Path, run_id: str, manifest: dict,
         d = metrics["capability_detail"][cap]
         errs = "、".join(f"{VERDICT_ZH.get(k, k)}×{n}"
                          for k, n in d["error_breakdown"].items()) or "—"
-        lines.append(f"| {CAP_LABELS_ZH[cap]} | {d['score']:.0%} | "
+        score = d["score"]
+        score_s = f"{score:.0%}" if score is not None else "—（未测）"
+        lines.append(f"| {CAP_LABELS_ZH[cap]} | {score_s} | "
                      f"{d['n_correct']}/{d['n_valid']} | {errs} |")
     lines.append("")
+
+    # 故障定位四态（design §6.3）：不只看对错，还定位坏在哪一环
+    fl = metrics.get("fault_localization") or {}
+    flz = fl.get("summary_zh") or {}
+    if flz:
+        lines.append("## 故障定位（行为 × 存储交叉）")
+        lines.append("")
+        lines.append("| 定位 | 用例数 |")
+        lines.append("|---|---|")
+        for label, n in flz.items():
+            lines.append(f"| {label} | {n} |")
+        n_nostorage = fl.get("n_cases_without_storage_evidence", 0)
+        if n_nostorage:
+            lines.append(f"| 无存储证据（无法定位） | {n_nostorage} |")
+        lines.append("")
     lines.append("## 判定明细")
     lines.append("")
     lines.append("| 探测点 | 能力 | 判定 | 判卷 | 置信 | 说明 |")

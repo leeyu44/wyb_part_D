@@ -25,6 +25,17 @@ from memhall.scoring.rules import EvidenceMissing, EvidenceStore, run_check
 
 _scripted = ScriptedJudge()
 
+# 阶段先后序：after: inject 的探测点只能看到 inject 及更早的证据
+# （boundary canary 在教学时点判——probe 段"作废后删除"洗白不了 over_persist）
+_PHASE_RANK = {"inject": 0, "confound": 1, "probe": 2}
+
+
+def _store_upto(store: EvidenceStore, after: str) -> EvidenceStore:
+    """按探测点声明的 after 截取证据视图（engine 侧实现契约 02 的阶段语义）。"""
+    limit = _PHASE_RANK.get(after, 2)
+    items = [e for e in store.items() if _PHASE_RANK.get(e.phase.value, 2) <= limit]
+    return EvidenceStore(items)
+
 
 def _answer_for(store: EvidenceStore, ask: str) -> str:
     """取 probe 段中对该问题的回复。精确话术优先（lint 已保证 ask 与 probe 段
@@ -168,7 +179,9 @@ def evaluate_case(case: MemoryCase, store: EvidenceStore, run_id: str,
                 explanation="运行无效：被测智能体后端不可用，不计入分母"))
             continue
         if isinstance(probe, RuleProbe):
-            out.append(_rule_verdict(probe, store, run_id, i))
+            out.append(_rule_verdict(probe, _store_upto(store, probe.after),
+                                     run_id, i))
         else:
-            out.append(_judge_verdict(probe, store, run_id, i, judges))
+            out.append(_judge_verdict(probe, _store_upto(store, probe.after),
+                                      run_id, i, judges))
     return out

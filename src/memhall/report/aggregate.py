@@ -48,7 +48,10 @@ def aggregate_runs(run_dirs: list[Path], out_dir: Path) -> dict:
         caps[cap] = {"label_zh": CAP_LABELS_ZH[cap], "n": len(scores),
                      "mean": round(mean, 4), "std": round(std, 4),
                      "min": round(min(scores), 4), "max": round(max(scores), 4)}
-    overall_m, overall_s = _mean_std([mt["overall_score"] for _, mt in runs])
+    overalls = [mt["overall_score"] for _, mt in runs]
+    if any(o is None for o in overalls):
+        raise ValueError("存在无有效计分探测点的轮次（overall=None），拒绝聚合")
+    overall_m, overall_s = _mean_std(overalls)
 
     result = {
         "adapter": runs[0][0].get("adapter"),
@@ -57,7 +60,13 @@ def aggregate_runs(run_dirs: list[Path], out_dir: Path) -> dict:
         "overall": {"mean": round(overall_m, 4), "std": round(overall_s, 4)},
         "capabilities": caps,
         "runs": [{"run_id": m.get("run_id"),
-                  "overall_score": round(mt["overall_score"], 4)} for m, mt in runs],
+                  "overall_score": round(mt["overall_score"], 4)
+                  if mt.get("overall_score") is not None else None,
+                  # 每轮分母（R12）：剔除口径不同的轮次不能裸平均
+                  "n_valid": mt.get("n_valid"),
+                  "n_invalid_run": mt.get("n_invalid_run"),
+                  "n_human_review": mt.get("n_human_review")}
+                 for m, mt in runs],
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "aggregate.json").write_text(
