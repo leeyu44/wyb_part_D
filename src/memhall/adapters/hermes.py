@@ -181,10 +181,12 @@ class HermesAdapter(AgentAdapter):
         self._clock_epoch = None
 
     def fs_snapshot(self) -> list[str] | None:
-        """VM 用户区文件清单（~ 下 4 层，排除 hermes 自身与缓存噪音）。"""
+        """VM 用户区文件清单（~ 下 4 层，排除 hermes 自身与缓存噪音）。
+        归一化用远端 $HOME 展开（不硬编码 /home/<用户名>——第三方 VM
+        用户名不同时硬编码会让全部 fs 断言静默失配）。"""
         cmd = ("find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
                "-o -name node_modules -o -name .local -o -name .kylinbot \\) -prune -o "
-               "-printf '%p\\n' 2>/dev/null | sed 's|^/home/okim|~|'")
+               '-printf \'%p\\n\' 2>/dev/null | sed "s|^$HOME|~|"')
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None
 

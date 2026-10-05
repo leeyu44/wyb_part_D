@@ -224,6 +224,6 @@ class OpenClawAdapter(AgentAdapter):
                "-o -name .openclaw -o -name .memhall-openclaw -o -name .memhall \\) -prune -o "
                "-printf '%p\\n'; "
                "find ~/.memhall-openclaw/workspace -maxdepth 6 -printf '%p\\n' 2>/dev/null) "
-               "2>/dev/null | sed 's|^/home/okim|~|' | sort -u")
+               "2>/dev/null | sed \"s|^$HOME|~|\" | sort -u")
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None

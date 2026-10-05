@@ -188,9 +188,10 @@ class KylinBotAdapter(AgentAdapter):
         self._clock_epoch = None
 
     def fs_snapshot(self) -> list[str] | None:
+        # 归一化用远端 $HOME 展开（防硬编码用户名，见 hermes.fs_snapshot 注）
         cmd = ("find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
                "-o -name node_modules -o -name .local -o -name .kylinbot \\) -prune -o "
-               "-printf '%p\\n' 2>/dev/null | sed 's|^/home/okim|~|'")
+               '-printf \'%p\\n\' 2>/dev/null | sed "s|^$HOME|~|"')
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None
 
