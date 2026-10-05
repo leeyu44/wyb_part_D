@@ -1,79 +1,190 @@
 #!/bin/bash
-# 在 openKylin 目标机上原生构建 memhall .deb（源码置于 ~/memhall 后执行）
-# 产物：~/deb-stage/memhall_${VERSION}_all.deb（内置离线 wheels，安装不依赖网络）
-set -e
-SRC=${SRC:-$HOME/memhall}
-cd $SRC
+# Build a reproducible, network-independent MemHall .deb on openKylin.
+set -Eeuo pipefail
+umask 022
 
-# 版本单一来源：pyproject.toml（此前三处硬编码，已经漂移过一次）
-VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC="${SRC:-$ROOT}"
+DIST="${DIST:-$SRC/dist}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1791072000}"
+if [[ ! "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]; then
+  echo "SOURCE_DATE_EPOCH must be an integer" >&2
+  exit 2
+fi
+export SOURCE_DATE_EPOCH PYTHONHASHSEED=0 TZ=UTC LC_ALL=C.UTF-8
 
-W=~/wheels
-rm -rf $W && mkdir -p $W
-pip3 download -q -i https://pypi.tuna.tsinghua.edu.cn/simple -d $W \
-  pydantic pyyaml matplotlib paramiko fastapi uvicorn httpx
-pip3 wheel -q --no-deps -i https://pypi.tuna.tsinghua.edu.cn/simple -w $W .
+for command in python3 dpkg dpkg-deb sha256sum find sort xargs touch awk grep uname wc; do
+  command -v "$command" >/dev/null || {
+    echo "missing build command: $command" >&2
+    exit 2
+  }
+done
 
-STAGE=~/deb-stage/memhall
-rm -rf ~/deb-stage
-mkdir -p $STAGE/DEBIAN $STAGE/usr/share/memhall/scripts $STAGE/usr/bin \
-  $STAGE/usr/share/applications $STAGE/usr/share/pixmaps
-cp -r $W $STAGE/usr/share/memhall/wheels
-cp -r cases $STAGE/usr/share/memhall/cases
-cp README.md LICENSE $STAGE/usr/share/memhall/
-cp scripts/judge_selftest.py $STAGE/usr/share/memhall/scripts/
-cp packaging/memhall.svg $STAGE/usr/share/pixmaps/memhall.svg
+UV="${UV:-$(command -v uv || true)}"
+if [[ -z "$UV" && -x "$HOME/.hermes/bin/uv" ]]; then
+  UV="$HOME/.hermes/bin/uv"
+fi
+if [[ -z "$UV" ]]; then
+  echo "uv is required to export the frozen uv.lock (set UV=/path/to/uv)" >&2
+  exit 2
+fi
 
-cat > $STAGE/usr/share/applications/memhall.desktop <<'DEOF'
+UV_REQUIRED_VERSION="${UV_REQUIRED_VERSION:-0.12.16}"
+UV_VERSION="$("$UV" --version | awk '{print $2}')"
+if [[ "$UV_VERSION" != "$UV_REQUIRED_VERSION" ]]; then
+  echo "uv $UV_REQUIRED_VERSION is required (found $UV_VERSION at $UV)" >&2
+  exit 2
+fi
+
+VERSION="$(python3 - "$SRC/pyproject.toml" <<'PY'
+import sys
+import tomllib
+with open(sys.argv[1], "rb") as stream:
+    print(tomllib.load(stream)["project"]["version"])
+PY
+)"
+ARCHITECTURE="${DEB_ARCH:-$(dpkg --print-architecture)}"
+if [[ ! "$ARCHITECTURE" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+  echo "invalid Debian architecture: $ARCHITECTURE" >&2
+  exit 2
+fi
+PACKAGE="memhall_${VERSION}_${ARCHITECTURE}"
+BUILD_ROOT="${BUILD_ROOT:-$(mktemp -d)}"
+KEEP_BUILD="${KEEP_BUILD:-0}"
+cleanup() {
+  if [[ "$KEEP_BUILD" != "1" ]]; then
+    rm -rf -- "$BUILD_ROOT"
+  fi
+}
+trap cleanup EXIT
+
+WHEELS="$BUILD_ROOT/wheels"
+STAGE="$BUILD_ROOT/$PACKAGE"
+mkdir -p "$WHEELS" "$STAGE/DEBIAN" "$STAGE/usr/bin"
+mkdir -p "$STAGE/usr/lib/memhall" "$STAGE/usr/share/memhall/scripts"
+mkdir -p "$STAGE/usr/share/applications" "$STAGE/etc/memhall"
+
+cd "$SRC"
+"$UV" export --quiet --frozen --no-dev --no-emit-project --no-header --no-annotate \
+  --output-file "$BUILD_ROOT/requirements.lock"
+python3 -m pip download --quiet --require-hashes --only-binary=:all: \
+  --dest "$WHEELS" --requirement "$BUILD_ROOT/requirements.lock"
+python3 -m pip wheel --quiet --no-deps --wheel-dir "$WHEELS" "$SRC"
+
+cp -a "$WHEELS" "$STAGE/usr/share/memhall/wheels"
+cp -a "$SRC/cases" "$STAGE/usr/share/memhall/cases"
+cp -a "$SRC/README.md" "$SRC/LICENSE" "$STAGE/usr/share/memhall/"
+cp -a "$SRC/.env.example" "$STAGE/etc/memhall/memhall.env.example"
+cp -a "$SRC/scripts/judge_selftest.py" "$STAGE/usr/share/memhall/scripts/"
+
+cat > "$STAGE/usr/bin/memhall" <<'EOF'
+#!/bin/sh
+export PYTHONPATH=/usr/lib/memhall/pylib${PYTHONPATH:+:$PYTHONPATH}
+export MPLCONFIGDIR="${XDG_CACHE_HOME:-$HOME/.cache}/memhall/matplotlib"
+exec python3 -c 'from memhall.cli import main; main()' "$@"
+EOF
+chmod 0755 "$STAGE/usr/bin/memhall"
+
+cat > "$STAGE/usr/share/applications/memhall.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=麟阁 MemHall
-Name[en]=MemHall
-GenericName=智能体记忆评测基准
-GenericName[en]=Agent Memory Benchmark
-Comment=教-隔-考三阶段剧本评测智能体长期记忆，输出六维能力雷达图
-Exec=/usr/bin/memhall ui
+Comment=智能体长期记忆评测
+Exec=memhall ui
+Icon=utilities-system-monitor
 Terminal=false
 Categories=Development;Utility;
-Icon=memhall
-StartupNotify=true
-DEOF
+Keywords=AI;Agent;Benchmark;Memory;
+EOF
 
-cat > $STAGE/usr/bin/memhall <<'WEOF'
-#!/bin/sh
-export PYTHONPATH=/usr/lib/memhall/pylib${PYTHONPATH:+:$PYTHONPATH}
-exec python3 -c 'import sys; from memhall.cli import main; sys.exit(main())' "$@"
-WEOF
-chmod 755 $STAGE/usr/bin/memhall
-
-cat > $STAGE/DEBIAN/control <<CEOF
+cat > "$STAGE/DEBIAN/control" <<EOF
 Package: memhall
 Version: $VERSION
-Architecture: all
+Architecture: $ARCHITECTURE
 Maintainer: MemHall Team <memhall@openkylin.example>
-Depends: python3 (>= 3.11)
+Depends: python3 (>= 3.11), python3-pip, fonts-noto-cjk
+Recommends: auditd, openssh-client
 Section: utils
 Priority: optional
 Homepage: https://gitee.com/mazhuoran23/MemHall
-Description: 麟阁 MemHall —— 面向 openKylin 生态的智能体记忆能力评测基准
- 三阶段剧本（教-隔-考）驱动被测智能体，采集对话/记忆快照/动作/文件系统四类证据，
- 混合判卷（规则断言 + LLM 单判）输出六维能力雷达。内置 mock 适配器可离线演示，
- hermes/kylinbot 适配器经 SSH 驱动真机评测。
-CEOF
+Description: MemHall agent long-term memory evaluation for openKylin
+ Runs scripted teach-confound-probe scenarios, records dialogue, memory,
+ action and filesystem evidence, then produces deterministic metrics and reports.
+ The package includes all Python wheels required for an offline installation.
+EOF
 
-cat > $STAGE/DEBIAN/postinst <<'PEOF'
+cat > "$STAGE/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
-set -e
-pip3 install --quiet --no-index --no-deps --upgrade --break-system-packages \
-  --target /usr/lib/memhall/pylib /usr/share/memhall/wheels/*.whl
-PEOF
+set -eu
+case "${1:-configure}" in
+  configure)
+    mkdir -p /usr/lib/memhall
+    target="$(mktemp -d /usr/lib/memhall/.pylib.XXXXXX)"
+    trap 'rm -rf "$target"' EXIT
+    PIP_BREAK_SYSTEM_PACKAGES=1 python3 -m pip install \
+      --quiet --no-index --no-deps --disable-pip-version-check \
+      --target "$target" /usr/share/memhall/wheels/*.whl
+    chmod -R a+rX "$target"
+    rm -rf /usr/lib/memhall/pylib
+    mv "$target" /usr/lib/memhall/pylib
+    trap - EXIT
+    PYTHONPATH=/usr/lib/memhall/pylib python3 -c \
+      'import memhall, pydantic, yaml, matplotlib, paramiko, fastapi; print("memhall", memhall.__version__)'
+    ;;
+esac
+exit 0
+EOF
 
-cat > $STAGE/DEBIAN/prerm <<'REOF'
+cat > "$STAGE/DEBIAN/postrm" <<'EOF'
 #!/bin/sh
-rm -rf /usr/lib/memhall/pylib
-REOF
-chmod 755 $STAGE/DEBIAN/postinst $STAGE/DEBIAN/prerm
+set -eu
+case "${1:-}" in
+  remove|purge)
+    rm -rf /usr/lib/memhall
+    ;;
+esac
+exit 0
+EOF
+chmod 0755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/postrm"
 
-cd ~/deb-stage
-fakeroot dpkg-deb --root-owner-group -Zxz --build memhall memhall_${VERSION}_all.deb 2>/dev/null || dpkg-deb -Zxz --build memhall memhall_${VERSION}_all.deb
-ls -lh memhall_${VERSION}_all.deb
+# dpkg records mtimes, so normalize every staged file before compression.
+find "$STAGE" -print0 | xargs -0 touch --no-dereference --date="@$SOURCE_DATE_EPOCH"
+mkdir -p "$DIST"
+DEB="$DIST/$PACKAGE.deb"
+rm -f -- "$DEB"
+dpkg-deb --root-owner-group -Zxz --build "$STAGE" "$DEB"
+touch --date="@$SOURCE_DATE_EPOCH" "$DEB"
+
+dpkg-deb --info "$DEB" >/dev/null
+dpkg-deb --contents "$DEB" > "$BUILD_ROOT/deb.contents"
+grep -F './usr/bin/memhall' "$BUILD_ROOT/deb.contents" >/dev/null
+DEB_SHA256="$(sha256sum "$DEB" | awk '{print $1}')"
+WHEELSET_SHA256="$(
+  cd "$WHEELS"
+  find . -maxdepth 1 -type f -name '*.whl' -printf '%P\0' |
+    sort -z |
+    xargs -0 sha256sum |
+    sha256sum |
+    awk '{print $1}'
+)"
+WHEEL_COUNT="$(find "$WHEELS" -maxdepth 1 -type f -name '*.whl' | wc -l | awk '{print $1}')"
+PYTHON_VERSION="$(python3 -c 'import platform; print(platform.python_version())')"
+cat > "$DIST/$PACKAGE.build.json" <<EOF
+{
+  "package": "memhall",
+  "version": "$VERSION",
+  "architecture": "$ARCHITECTURE",
+  "build_machine": "$(uname -m)",
+  "python_version": "$PYTHON_VERSION",
+  "uv_version": "$UV_VERSION",
+  "source_date_epoch": $SOURCE_DATE_EPOCH,
+  "uv_lock_sha256": "$(sha256sum "$SRC/uv.lock" | awk '{print $1}')",
+  "wheel_count": $WHEEL_COUNT,
+  "wheelset_sha256": "$WHEELSET_SHA256",
+  "deb_sha256": "$DEB_SHA256"
+}
+EOF
+touch --date="@$SOURCE_DATE_EPOCH" "$DIST/$PACKAGE.build.json"
+
+echo "$DEB"
+echo "sha256=$DEB_SHA256"

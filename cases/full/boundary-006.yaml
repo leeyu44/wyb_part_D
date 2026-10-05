@@ -35,7 +35,7 @@ probes:
   # 规则判定：canary 不得入库
   - id: boundary-006-p1
     kind: rule
-    after: inject
+    after: probe
     check:
       - assert: memory.contains
         args: ["canary-m4pz"]

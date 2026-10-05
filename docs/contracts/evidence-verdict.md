@@ -1,6 +1,6 @@
 # 契约 03 · Evidence 证据 + Verdict 判定数据结构
 
-> v0.1 草案 · 2026-09-23 · owner：C（评分），消费方：B（probe 判定语义引用）+ A（适配器产出证据对象）
+> v0.2 · 2026-10-04 · owner：C（评分），消费方：B（probe 判定语义引用）+ A（适配器产出证据对象）
 > 证据 = 判卷的全部输入；判定 = 每个证据组合的结论，带可下钻的引用链。对应 design.md §5/§6。
 > JSONL 格式，一次 run 一个目录 `evidence/<run_id>/`。
 
@@ -10,8 +10,8 @@
 
 ```json
 {
-  "evidence_id": "ev-000123",
-  "run_id": "r-20260927-kylinbot-8f3a",
+  "evidence_id": "ev-update-014-0123",
+  "run_id": "20261004-120003-123456-kylinbot",
   "case_id": "update-014",
   "phase": "probe",                    // inject | confound | probe
   "type": "dialogue",                  // 四类枚举，见下
@@ -79,13 +79,6 @@
 }
 ```
 
-**coverage 门禁（2026-10-04 落地，docs/review-tasks.md R01）**：ActionDump 的
-`coverage` 字段决定动作断言可否判——`full` 才能支撑 `actions.*` 断言；
-`partial`（如 agent.log 只有工具名没有参数）/`unknown`（无日志源）时
-"没找到动作"分不清是没做还是没记，规则层抛 `EvidenceMissing` →
-探测点判 `invalid_run`（证据不足 ≠ 答错）。当前所有真智能体适配器均非
-full，故 actions 断言探测一律 role=diagnostic 不进六维，待证据面成熟。
-
 ## 3. Verdict：判定结果
 
 每个 probe 产出一条 verdict，写 `verdicts.jsonl`：
@@ -146,18 +139,36 @@ judge 判定（rubric + anchors + verdict_map，双判）
 
 ```json
 {
-  "run_id": "r-20260927-kylinbot-8f3a",
+  "run_id": "20261004-120003-123456-kylinbot",
+  "status": "completed",
   "started_at": "...", "finished_at": "...",
-  "agent": "kylinbot",
-  "cases_version": "git:abc1234",       // 题库版本
+  "adapter": "kylinbot",
+  "tool_version": "0.2.1",
+  "cases_version": "sha256:abc1234...", // 规范化题库版本
+  "cases_snapshot_sha256": "...",       // 本轮 cases.json
   "case_sample_seed": 42,               // 题目池抽样 seed（可复现同一份题）
-  "code_version": "git:def5678",
+  "code_version": "sha256:def5678...", // 实际安装源码树；git_hash 另存辅助定位
   "judge": {"models": ["deepseek-v4", "qwen-max"], "prompt_version": "judge-v1.2"},
-  "env": {"os": "openKylin 3.0 (20260905)", "vm_snapshot": "clean-baseline", "python": "3.11.9"},
-  "cost": {"judge_tokens": {...}, "agent_tokens": {...}},   // 记账，W2 对接 Token 中心⚠️
-  "repeat_of": null                     // 重复运行时填原 run_id（run diff 的配对依据）
+  "env": {"runner_host": {...}, "target": {"os": "openKylin 3.0", "vm_snapshot": "agents-warm", "agent_version": "kylin-bot 0.7.5"}},
+  "cost": {"judge_tokens": {...}, "agent_tokens": {...}},   // 总量 + usage 上报覆盖率
+  "repeat_of": null,                    // 重复运行时填原 run_id（run diff 的配对依据）
+  "repeat_group": "...",
+  "repeat_index": 1,
+  "repeat_count": 2,
+  "case_results": [{"case_id": "update-014", "status": "completed", "evidence_sha256": "..."}],
+  "evidence_bundle_sha256": "...",
+  "output_hashes": {
+    "verdicts.jsonl": "...", "metrics.json": "...",
+    "report.md": "...", "radar.png": "..."
+  }
 }
 ```
+
+runner 启动时先写 `status=running`，每个 case 后原子更新；正常封存为
+`completed`，外部中止或未捕获错误封存为 `aborted`。用例原文固化在同目录
+`cases.json`，离线重评分不得重新读取已经变化的仓库题库。
+评分完成后原子写入四个评分产物，并将其 SHA-256 写入 `output_hashes`；`verify`
+同时校验判定 ID 唯一性、证据引用所属 case 和这四个产物的完整性。
 
 ## 6. 开放问题（冻结前必须定）
 

@@ -58,7 +58,7 @@ class AgentAdapter:
           评分层自动降级为纯行为判定（五态里丢「不该记的记下了」类，报告注明）。
         """
 
-    def dump_actions(self) -> list[Action]:
+    def dump_actions(self) -> ActionDump:
         """导出智能体自上次 reset 以来的操作记录（工具调用、文件读写、命令执行）。
         - 来源优先级：MCP 调用日志⚠️ > 智能体自带日志 > auditd 兜底（D 提供 helper）。
         - 返回 Action 列表（契约 03 §2.3）；拿不到完整记录时返回能拿到的部分，
@@ -104,13 +104,17 @@ notes: "3.0 内置；记忆存储位置 W1 摸底（environment.md §7）"
 | doctor 自动探测 | `memhall doctor` 扫系统 + 写监控定位记忆文件 | 产出零代码档配置（自动填 memory_paths），契约同上 |
 | 定制适配器 | 继承基类（KylinBot 预计落此档） | 全部方法自行实现，本契约 1:1 约束 |
 
-**验收口径**：任何接入方式，跑通 `memhall doctor → run -c cases/quick → compare` 三条命令即算接入成功（quick 集 = full 的虚拟冒烟子集，契约 02）。
+**验收口径**：任何接入方式，跑通 `memhall doctor → run --cases quick → compare` 三条命令即算接入成功（quick 集 = 契约 02 定义的冒烟子集）。
 
 ## 5. 稳定性要求（对准评分维度「稳定可复现」）
 
 - 适配器自身**不得有随机行为**：不 sleep 随机时长、不用随机 id 之外的随机源；
 - 两次 reset→send→dump 的结果中，非智能体因素（时间戳、耗时、随机 id）之外必须可复现；
 - `dump_memory` 导出的快照带哈希指纹（runner 计算），同一状态两次 dump 哈希一致即达标——这是 runner 验收适配器的固定测试。
+- `fs_snapshot_hashes` 应返回路径到内容指纹的映射；只实现旧版 `fs_snapshot`
+  时仍可判断创建/删除，但不能把同路径内容变化判为 `modified`。
+- `environment_info` 只返回无凭据的目标环境信息，写入 run manifest；SSH 密码、
+  API key 等不得进入证据包。
 
 ## 6. 开放问题（冻结前必须定）
 

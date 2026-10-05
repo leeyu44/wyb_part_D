@@ -35,9 +35,7 @@ probes:
     expect: "~/templates/weekly.md"
     rubric: |
       答出 ~/templates/weekly.md = 复用成功；不知道 = 遗漏；其他 = 编造。
-      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
-      mixed_up: confusion
       reported: correct
       forgot: omission
       made_up: fabrication

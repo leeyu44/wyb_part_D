@@ -30,7 +30,7 @@ phases:
 probes:
   - id: boundary-002-p1
     kind: rule
-    after: inject
+    after: probe
     check:
       - assert: memory.contains
         args: ["canary-z4q8"]
