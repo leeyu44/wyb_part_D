@@ -16,9 +16,14 @@ from __future__ import annotations
 import os
 import re
 import time
+from datetime import datetime, timezone
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable
-from memhall.adapters.remote import SshChannel, b64, elapsed_ms, now_utc
+from memhall.adapters.base import AgentAdapter, AgentUnavailable
+from memhall.adapters.audit import AuditdCollector
+from memhall.adapters.remote import (
+    SshChannel, b64, elapsed_ms, now_utc, remote_environment,
+    remote_fs_snapshot, restore_remote_clock, shift_remote_clock,
+)
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
 HERMES_BIN = "~/.hermes/bin/hermes"
@@ -39,27 +44,14 @@ class HermesAdapter(AgentAdapter):
 
     def __init__(self, channel: SshChannel | None = None):
         self.ch = channel or SshChannel()
+        self.audit = AuditdCollector(self.ch)
         self._log_offset = 0
-        self._clock_epoch: int | None = None
-        # 统一模型模式（GATEWAY_VM_URL，VM 走宿主网关的明文 http 腿）优先：
-        # 网关改写 model、真凭据只在网关侧
-        from memhall.gateway import gateway_settings
-        gw = gateway_settings("hermes", vm_lane=True) or {}
-        self._key = gw.get("key") or os.environ.get("AGENT_LLM_KEY", "")
-        self._url = gw.get("base_url") or os.environ.get("AGENT_LLM_BASE_URL", "")
-        self._model = gw.get("model") or os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
-
-    def _llm_env_lines(self) -> str:
-        """网关凭据的 env 文件内容（send 走 stdin；systest 离线脚本 source 用）。
-
-        必须 export——`. file` source 裸赋值只设 shell 局部变量，hermes 子进程
-        看不到（2026-10-02 VM 实跑逮到的坑）。值加单引号防空白/特殊字符劈碎。
-        """
-        def _q(v: str) -> str:
-            return "'" + v.replace("'", "'\\''") + "'"
-        return (f"export DEEPSEEK_API_KEY={_q(self._key)}\n"
-                f"export DEEPSEEK_BASE_URL={_q(self._url)}\n"
-                f"export DEEPSEEK_MODEL={_q(self._model)}\n")
+        self._clock_state = None
+        self._base_env = (
+            f"export DEEPSEEK_API_KEY='{os.environ.get('AGENT_LLM_KEY', '')}' "
+            f"DEEPSEEK_BASE_URL='{os.environ.get('AGENT_LLM_BASE_URL', '')}'; "
+        )
+        self._model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
 
     def reset(self) -> None:
         rc, _, err = self.ch.run(
@@ -67,46 +59,23 @@ class HermesAdapter(AgentAdapter):
             f"rm -rf {' '.join(EVAL_WORKDIRS)} && echo ok")
         if rc != 0:
             raise RuntimeError(f"Hermes 记忆清零失败: {err.strip()[:300]}")
-        # 会话转录候选目录一并清（R02：任何"从历史会话回忆"的检索路径都会把
-        # 上一个 case 的答案带进下一个 case；路径下次 VM 联调核实，不存在时无害）
-        self.ch.run("rm -rf ~/.hermes/sessions ~/.hermes/history* 2>/dev/null; true")
         # 记 agent.log 偏移：dump_actions 只解析本 case 增量
         rc, out, _ = self.ch.run(f"wc -c < {AGENT_LOG} 2>/dev/null || echo 0")
         self._log_offset = int(out.strip() or 0)
-
-    def verify_reset(self) -> None:
-        """memories 目录必须整目录空——dump 只读两个 md，残留即污染（R02）。"""
-        rc, out, _ = self.ch.run(f"ls -A {MEM_DIR} 2>/dev/null | head -3")
-        if rc == 0 and out.strip():
-            raise AdapterError(
-                f"hermes reset 后 {MEM_DIR} 仍有残留：{out.strip()[:120]}")
+        self.audit.start()
 
     def send(self, session_id: str, message: str) -> Reply:
-        # 凭据与消息都走 stdin（base64），命令行零明文：VM 内 ps/history
-        # 不可见，值含引号/特殊字符也不会把命令拼碎。
-        # stdin 先 cat 成临时文件再按行拆（管道上 head/tail 直接分段会丢数据——
-        # head 无法回退 seek，超读部分即吞掉，VM 实跑逮到 query 为空）。
-        # env 文件 600 权限即删；hermes 从消息文件读，不再用 stdin。
-        script = (
-            'd=$(mktemp -t mh-stdin.XXXXXX) && cat > "$d" && '
-            'e=$(mktemp -t mh-env.XXXXXX) && head -n1 "$d" | base64 -d > "$e" '
-            '&& chmod 600 "$e" && . "$e" && rm -f "$e" && '
-            'm=$(mktemp -t mh-msg.XXXXXX) && tail -n +2 "$d" | base64 -d > "$m" '
-            '&& rm -f "$d" && '
-            f'timeout 280 {HERMES_BIN} chat --query-file "$m" '
-            '--oneshot --provider deepseek --model "$DEEPSEEK_MODEL" 2>/dev/null; '
-            'rm -f "$m"')
+        cmd = (f"{self._base_env}"
+               f"echo {b64(message)} | base64 -d | timeout 280 {HERMES_BIN} chat "
+               f"--query-file - --oneshot --provider deepseek --model {self._model} "
+               f"2>/dev/null")
         sent = now_utc()
         t0 = time.time()
-        rc, out, _ = self.ch.run(script, timeout=300,
-                                 stdin_data=b64(self._llm_env_lines()) + "\n"
-                                            + b64(message))
+        rc, out, _ = self.ch.run(cmd, timeout=300)
         text = _strip_tui(out)
         if rc != 0 and not text:
             raise AgentUnavailable(f"hermes 调用失败({rc})")
-        # hermes 后端故障文案（已实测两种）：不让错误文本混进答案被当行为评分
-        if ("API failed after" in text or "Final error" in text
-                or "server error" in text.lower()):
+        if "API failed after" in text or "Final error" in text:
             raise AgentUnavailable(f"hermes 后端不可用: {text[:200]}")
         return Reply(session_id=session_id, text=text,
                      sent_at=sent, reply_at=now_utc(),
@@ -114,11 +83,6 @@ class HermesAdapter(AgentAdapter):
 
     def end_session(self, session_id: str) -> None:
         pass  # oneshot 每次独立进程，会话隔离天然成立
-
-    def version_info(self) -> str | None:
-        rc, out, _ = self.ch.run(f"{HERMES_BIN} --version 2>/dev/null", timeout=30)
-        line = out.strip().splitlines()[0] if out.strip() else ""
-        return line or None
 
     def dump_memory(self) -> MemorySnapshot:
         cmd = (f"for f in {MEM_DIR}/MEMORY.md {MEM_DIR}/USER.md; do "
@@ -158,37 +122,54 @@ class HermesAdapter(AgentAdapter):
                         result=parts[2],
                         source=ActionSource.AGENT_LOG,
                     ))
-        return ActionDump(actions=actions,
-                          coverage="partial" if actions else "unknown")
+        audit_actions = self.audit.dump()
+        actions.extend(audit_actions)
+        return ActionDump(
+            actions=actions,
+            coverage="partial" if actions or self.audit.active else "unknown",
+        )
 
     def clock_shift(self, days: int) -> None:
-        """VM 拨钟（sudo date -s，密码走 stdin），记录原时刻供恢复。"""
         if days == 0:
             return
-        rc, out, _ = self.ch.run("date +%s")
-        if rc != 0:
-            raise RuntimeError("拨钟前读取系统时间失败")
-        self._clock_epoch = int(out.strip())
-        rc, _, err = self.ch.sudo(f"date -s '+{days} days' >/dev/null 2>&1 && echo ok")
-        if rc != 0:
-            raise RuntimeError(f"拨钟失败: {err.strip()[:200]}")
+        self._clock_state = shift_remote_clock(self.ch, days)
 
     def clock_restore(self) -> None:
-        epoch = getattr(self, "_clock_epoch", None)
-        if epoch is None:
+        if self._clock_state is None:
             return
-        self.ch.sudo(f"date -s @{epoch} >/dev/null 2>&1 && echo ok")
-        self._clock_epoch = None
+        restore_remote_clock(self.ch, self._clock_state)
+        self._clock_state = None
 
     def fs_snapshot(self) -> list[str] | None:
-        """VM 用户区文件清单（~ 下 4 层，排除 hermes 自身与缓存噪音）。
-        归一化用远端 $HOME 展开（不硬编码 /home/<用户名>——第三方 VM
-        用户名不同时硬编码会让全部 fs 断言静默失配）。"""
+        """VM 用户区文件清单（~ 下 4 层，排除 hermes 自身与缓存噪音）。"""
         cmd = ("find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
                "-o -name node_modules -o -name .local -o -name .kylinbot \\) -prune -o "
-               '-printf \'%p\\n\' 2>/dev/null | sed "s|^$HOME|~|"')
+               "-printf '%p\\n' 2>/dev/null | sed 's|^/home/okim|~|'")
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None
+
+    def fs_snapshot_hashes(self) -> dict[str, str] | None:
+        return remote_fs_snapshot(self.ch)
+
+    def reboot(self) -> None:
+        self.audit.stop()
+        self.ch.reboot_and_wait()
+        self.audit.start()
+
+    def rollback(self) -> None:
+        from memhall.vm import VmwareManager
+        self.audit.stop()
+        self.ch.close()
+        VmwareManager.from_env().revert()
+        self.audit.start()
+
+    def environment_info(self) -> dict:
+        return remote_environment(
+            self.ch, self.name, f"{HERMES_BIN} --version 2>/dev/null")
+
+    def close(self) -> None:
+        self.audit.stop()
+        self.ch.close()
 
 
 def _strip_tui(out: str) -> str:

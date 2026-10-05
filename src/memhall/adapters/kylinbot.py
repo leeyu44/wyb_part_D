@@ -22,7 +22,11 @@ import time
 from datetime import datetime
 
 from memhall.adapters.base import AgentAdapter, AgentUnavailable
-from memhall.adapters.remote import SshChannel, b64, elapsed_ms, now_utc
+from memhall.adapters.audit import AuditdCollector
+from memhall.adapters.remote import (
+    SshChannel, b64, elapsed_ms, now_utc, remote_environment,
+    remote_fs_snapshot, restore_remote_clock, shift_remote_clock,
+)
 from memhall.schema.evidence import (
     ActionDump,
     MemoryEntry,
@@ -31,9 +35,6 @@ from memhall.schema.evidence import (
 )
 
 BRAIN_DB = "~/.kylinbot/workspace/memory/brain.db"
-CONFIG_TOML = "~/.kylinbot/config.toml"
-CONFIG_BAK = "~/.kylinbot/config.toml.bak-memhall"
-DIRECT_PROVIDER = "custom:https://api.mazhuoran.cloud/v1"
 
 # 用例注入的虚构工作区（评测专用 VM，reset 一并清掉防跨轮污染）
 EVAL_WORKDIRS = ["~/dev", "~/work", "~/proj", "~/docs", "~/notes",
@@ -74,39 +75,10 @@ class KylinBotAdapter(AgentAdapter):
 
     def __init__(self, channel: SshChannel | None = None):
         self.ch = channel or SshChannel()
-        self._clock_epoch: int | None = None
-
-    def _apply_model_lane(self) -> None:
-        """统一模型模式：custom provider 改指宿主网关（首次备份，直连模式自动还原）。
-
-        config.toml 的 provider 编码在表名里（[providers.models."custom:<url>"]，
-        wire_api=chat_completions）——sed 换表名 + 表内 api_key 换 dummy
-        （入站 Bearer 兼作网关记账的身份标记）。model 字段不动：网关侧强制改写。
-        """
-        from memhall.gateway import gateway_settings
-        gw = gateway_settings("kylinbot", vm_lane=True)
-        rc, cur, _ = self.ch.run(f"grep -o 'custom:[^\"]*' {CONFIG_TOML} | head -1")
-        current = cur.strip()
-        if gw:
-            want = f"custom:{gw['base_url']}"
-            if current == want:
-                return
-            if not current.startswith("custom:"):
-                raise RuntimeError(f"config.toml provider 形态意外: {current[:80]}")
-            # 首次改写前备份（含直连真 key），供直连模式还原
-            self.ch.run(f"[ -f {CONFIG_BAK} ] || cp {CONFIG_TOML} {CONFIG_BAK}")
-            rc, _, err = self.ch.run(
-                f'sed -i "s|{current}|{want}|" {CONFIG_TOML} && '
-                f"sed -i '/providers\\.models\\.\"custom:/,/^$/ "
-                f"s|^api_key = .*|api_key = \"{gw['key']}\"|' {CONFIG_TOML}")
-            if rc != 0:
-                raise RuntimeError(f"config.toml 改指网关失败: {err.strip()[:200]}")
-        elif current != DIRECT_PROVIDER and "8311" in current:
-            # 上轮统一模式残留：还原直连配置
-            self.ch.run(f"[ -f {CONFIG_BAK} ] && cp {CONFIG_BAK} {CONFIG_TOML}")
+        self.audit = AuditdCollector(self.ch)
+        self._clock_state = None
 
     def reset(self) -> None:
-        self._apply_model_lane()
         rc, out, err = self.ch.run(
             "kylin-bot memory clear --yes 2>&1 | grep -E 'Cleared|Found' "
             f"; rm -rf {' '.join(EVAL_WORKDIRS)}"
@@ -122,29 +94,26 @@ class KylinBotAdapter(AgentAdapter):
                                        timeout=60)
             if rc2 != 0 or "Total:    0" not in out2:
                 raise RuntimeError(f"KylinBot 记忆清零失败: {(out + err).strip()[:300]}")
+        self.audit.start()
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        cmd = (f'timeout 280 kylin-bot agent -m "$(echo {b64(message)} | base64 -d)" '
-               f"2>/dev/null")
+        cmd = (f'timeout 280 kylin-bot agent -m '
+               f'"$(echo {b64(message)} | base64 -d)"')
         sent = now_utc()
         t0 = time.time()
-        rc, out, _ = self.ch.run(cmd, timeout=300)
+        rc, out, err = self.ch.run(cmd, timeout=300)
         text = _strip_logs(out)
-        if not text:
-            raise AgentUnavailable(f"kylin-bot 无有效回复(rc={rc}): {out.strip()[:200]}")
+        if rc != 0 or not text:
+            detail = text or _strip_logs(err) or err.strip()
+            raise AgentUnavailable(
+                f"kylin-bot 调用失败(rc={rc}): {detail[:300] or '无输出'}")
         return Reply(session_id=session_id, text=text,
                      sent_at=sent, reply_at=now_utc(),
                      latency_ms=elapsed_ms(t0), token_usage=None)
 
-    def end_session(self, sid: str) -> None:
+    def end_session(self, session_id: str) -> None:
         pass  # agent 单发模式每次独立进程，无长会话
-
-    def version_info(self) -> str | None:
-        rc, out, _ = self.ch.run(
-            "kylin-bot --version 2>/dev/null || kylin-bot -V 2>/dev/null", timeout=30)
-        line = out.strip().splitlines()[0] if out.strip() else ""
-        return line or None
 
     def dump_memory(self) -> MemorySnapshot:
         script = "python3 -c '" + _DUMP_SRC.replace("'", "'\\''") + "'"
@@ -167,33 +136,52 @@ class KylinBotAdapter(AgentAdapter):
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:
-        return ActionDump(actions=[], coverage="unknown")
+        actions = self.audit.dump()
+        return ActionDump(
+            actions=actions,
+            coverage="partial" if actions or self.audit.active else "unknown",
+        )
 
     def clock_shift(self, days: int) -> None:
-        """VM 拨钟（sudo date -s），记录原时刻供恢复。"""
         if days == 0:
             return
-        rc, out, _ = self.ch.run("date +%s")
-        if rc != 0:
-            raise RuntimeError("拨钟前读取系统时间失败")
-        self._clock_epoch = int(out.strip())
-        rc, _, err = self.ch.sudo(f"date -s '+{days} days' >/dev/null 2>&1 && echo ok")
-        if rc != 0:
-            raise RuntimeError(f"拨钟失败: {err.strip()[:200]}")
+        self._clock_state = shift_remote_clock(self.ch, days)
 
     def clock_restore(self) -> None:
-        if self._clock_epoch is None:
+        if self._clock_state is None:
             return
-        self.ch.sudo(f"date -s @{self._clock_epoch} >/dev/null 2>&1 && echo ok")
-        self._clock_epoch = None
+        restore_remote_clock(self.ch, self._clock_state)
+        self._clock_state = None
 
     def fs_snapshot(self) -> list[str] | None:
-        # 归一化用远端 $HOME 展开（防硬编码用户名，见 hermes.fs_snapshot 注）
         cmd = ("find ~ -maxdepth 4 \\( -name .hermes -o -name .cache -o -name .config "
                "-o -name node_modules -o -name .local -o -name .kylinbot \\) -prune -o "
-               '-printf \'%p\\n\' 2>/dev/null | sed "s|^$HOME|~|"')
+               "-printf '%p\\n' 2>/dev/null | sed 's|^/home/okim|~|'")
         rc, out, _ = self.ch.run(cmd, timeout=60)
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else None
+
+    def fs_snapshot_hashes(self) -> dict[str, str] | None:
+        return remote_fs_snapshot(self.ch)
+
+    def reboot(self) -> None:
+        self.audit.stop()
+        self.ch.reboot_and_wait()
+        self.audit.start()
+
+    def rollback(self) -> None:
+        from memhall.vm import VmwareManager
+        self.audit.stop()
+        self.ch.close()
+        VmwareManager.from_env().revert()
+        self.audit.start()
+
+    def environment_info(self) -> dict:
+        return remote_environment(
+            self.ch, self.name, "kylin-bot --version 2>/dev/null")
+
+    def close(self) -> None:
+        self.audit.stop()
+        self.ch.close()
 
 
 def _strip_logs(out: str) -> str:

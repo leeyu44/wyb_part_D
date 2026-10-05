@@ -21,10 +21,12 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
+from memhall.adapters.base import (
+    AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW, fingerprint_tree,
+)
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
 _SEND_MIN_INTERVAL = float(os.environ.get("CLAUDE_SEND_INTERVAL", "2"))
@@ -56,23 +58,15 @@ class LocalClaudeAdapter(AgentAdapter):
 
     def _resolve_exe(self) -> str:
         if self._exe is None:
-            from memhall.discovery import ADAPTER_CLI, find_cli
-            exe = find_cli(*ADAPTER_CLI["claude"])
+            from memhall.discovery import _which
+            exe = _which("claude")
             if not exe:
-                raise AgentUnavailable(
-                    "PATH 与 ~/.local/bin 均找不到 claude"
-                    "（npm i -g @anthropic-ai/claude-code）")
+                raise AgentUnavailable("PATH 里找不到 claude（npm i -g @anthropic-ai/claude-code）")
             self._exe = exe
         return self._exe
 
     def _sandbox_env(self) -> dict:
         env = os.environ.copy()
-        from memhall.gateway import gateway_settings
-        if gateway_settings("claude-local"):
-            # 显式拒绝而非静默绕过：统一对照的车道里混进不同后端 = 口径污染
-            raise AgentUnavailable(
-                "统一模型网关 v1 仅 OpenAI 协议面，claude-local 走 anthropic 协议"
-                "进不来——它不参与本轮统一对照，请unset GATEWAY_URL 或另行评测")
         base = os.environ.get("CLAUDE_LLM_BASE_URL", "").rstrip("/")
         key = os.environ.get("CLAUDE_LLM_KEY", "")
         if base and key:
@@ -100,7 +94,7 @@ class LocalClaudeAdapter(AgentAdapter):
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        sent = datetime.now(UTC)
+        sent = datetime.now(timezone.utc)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -116,21 +110,12 @@ class LocalClaudeAdapter(AgentAdapter):
             raise AgentUnavailable(
                 f"claude 无有效回复(rc={r.returncode}): {text[:150]} | {(r.stderr or '')[:150]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(UTC),
+                     reply_at=datetime.now(timezone.utc),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
     def end_session(self, session_id: str) -> None:
         pass  # -p oneshot 每次独立进程，会话隔离天然成立
-
-    def version_info(self) -> str | None:
-        try:
-            exe = self._resolve_exe()
-        except Exception:  # noqa: BLE001 未装/未探测到 = 无版本元数据
-            return None
-        from memhall.adapters.base import cli_version
-        return cli_version([exe, "--version"])
-
 
     def dump_memory(self) -> MemorySnapshot:
         """auto-memory（按项目路径编码分目录）+ 工作区 CLAUDE.md 两处合并。"""
@@ -156,23 +141,24 @@ class LocalClaudeAdapter(AgentAdapter):
                     entry_id=f"m-{len(entries):04d}", content=s,
                     created_at=None, source_turn=rel))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(UTC),
+                              dumped_at=datetime.now(timezone.utc),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:
         return ActionDump(actions=[], coverage="unknown")
 
     def fs_snapshot(self) -> list[str] | None:
-        """workspace 清单，路径归一 ~/ 前缀（R24：fs 断言写 ~/dev/src/demo，
-        相对路径永不匹配——workspace 就是本适配器的"用户区"）。"""
         if not self.workspace.exists():
             return None
         out = []
         for p in sorted(self.workspace.rglob("*")):
             if (p.is_file()
                     and not any(part.startswith(".") for part in p.parts)):
-                out.append("~/" + p.relative_to(self.workspace).as_posix())
+                out.append(p.relative_to(self.workspace).as_posix())
         return out
+
+    def fs_snapshot_hashes(self) -> dict[str, str] | None:
+        return fingerprint_tree(self.workspace)
 
     def clock_shift(self, days: int) -> None:
         if days == 0:

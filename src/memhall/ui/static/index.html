@@ -273,24 +273,6 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
   background:linear-gradient(100deg,transparent 30%,var(--acc-soft) 50%,transparent 70%);
   animation:shimmer 1.1s linear infinite}
 @keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
-
-/* 跑前成本确认弹窗 */
-.cm-wrap{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;
-  background:rgba(24,24,27,.38);backdrop-filter:blur(3px);opacity:0;pointer-events:none}
-.cm-wrap.on{opacity:1;pointer-events:auto;transition:opacity .22s ease}
-.cm-panel{width:min(430px,92vw);background:var(--card);border:1px solid var(--line);
-  border-radius:14px;padding:20px 22px 16px;box-shadow:0 28px 70px rgba(24,24,27,.28);
-  transform:translateY(10px) scale(.96);opacity:0}
-.cm-wrap.on .cm-panel{transform:none;opacity:1;transition:transform .3s cubic-bezier(.22,1.2,.36,1),opacity .22s ease}
-.cm-panel h3{font-family:var(--serif);font-size:17px;margin-bottom:4px}
-.cm-panel .cm-sub{color:var(--sub);font-size:12.5px;margin-bottom:14px}
-.cm-cost{display:flex;align-items:baseline;gap:10px;background:var(--acc-soft);
-  border:1px solid var(--acc-line);border-radius:10px;padding:12px 16px;margin-bottom:10px}
-.cm-cost b{font-size:26px;font-family:var(--mono);color:var(--acc-ink);font-weight:700}
-.cm-cost span{color:var(--acc-ink);font-size:12.5px}
-.cm-meta{color:var(--sub);font-size:12.5px;margin-bottom:14px;line-height:1.7}
-.cm-meta b{color:var(--ink)}
-.cm-actions{display:flex;justify-content:flex-end;gap:10px}
 </style>
 </head>
 <body>
@@ -332,7 +314,7 @@ footer{margin-top:36px;text-align:center;color:var(--faint);font-size:12px}
               <option value="hermes-local">hermes（本机）</option>
               <option value="claude-local">claude code（本机）</option>
               <option value="qwen-local">qwen code（本机）</option>
-              <option value="hermes">hermes（VM）</option><option value="kylinbot">kylinbot（VM）</option><option value="openclaw">openclaw（VM）</option></select></div>
+              <option value="hermes">hermes（VM）</option><option value="kylinbot">kylinbot（VM）</option></select></div>
           <div class="field"><label>用例集</label><select id="fCases"></select></div>
           <div class="field"><label>判卷</label>
             <select id="fJudge"><option value="scripted">脚本判卷（离线）</option>
@@ -684,15 +666,8 @@ $("#docRefresh").addEventListener("click",()=>loadDoctor(true));
 /* ---------- 评测 ---------- */
 async function loadCaseDirs(){
   try{const d=await api("/api/case-dirs");
-    $("#fCases").innerHTML=d.sets.map(x=>`<option value="${esc(x.id)}">${esc(x.label)}</option>`).join("");
-  }catch(e){$("#fCases").innerHTML='<option value="cases/full">cases/full</option>';}
-}
-async function loadAdapters(){
-  /* 静态 option 是兜底；接口给出真实可跑性，未检出的标注出来防误选 */
-  try{const st=await api("/api/adapter-status");
-    $("#fAdapter").innerHTML=Object.entries(st).map(([id,v])=>
-      `<option value="${id}">${esc(v.label)}${v.ok?"":"（未检出）"}</option>`).join("");
-  }catch(e){}
+    $("#fCases").innerHTML=d.dirs.map(x=>`<option>${esc(x)}</option>`).join("");
+  }catch(e){$("#fCases").innerHTML='<option>cases/full</option>';}
 }
 function logLine(cls,msg,title){
   const c=$("#console");
@@ -704,39 +679,8 @@ function logLine(cls,msg,title){
   c.scrollTop=c.scrollHeight;
 }
 let es=null, pendingRunId=null;
-function fmtTok(n){return n>=1e6?(n/1e6).toFixed(1)+"M":Math.round(n/1e3)+"k"}
-function confirmRun(body){
-  return new Promise(async(res)=>{
-    let e=null;
-    try{e=await api("/api/estimate?adapter="+encodeURIComponent(body.adapter)+"&cases="+encodeURIComponent(body.cases));}catch(_){}
-    const wrap=$("#costModal"),ok=$("#cmOk"),cancel=$("#cmCancel");
-    const sub=$("#cmSub"),cost=$("#cmCost"),meta=$("#cmMeta");
-    if(e&&e.available){
-      sub.textContent="将开跑一轮三阶段剧本（教 → 隔 → 考）";
-      cost.style.display="flex";
-      $("#cmTokens").textContent="≈ "+fmtTok(e.total_tokens);
-      $("#cmTokensSub").textContent="tokens"+(e.requests?(" · 约 "+e.requests+" 次上游请求"):"");
-      meta.innerHTML="被测智能体 <b>"+esc(body.adapter)+"</b> × <b>"+e.n_cases+"</b> 用例 · 按 "+e.basis_runs+" 轮历史实测均摊（每例 ≈ "+fmtTok(e.tokens_per_case)+"）<br>判卷流量另计；实际以网关记账为准，跑完自动校准预估。";
-    }else{
-      sub.textContent="将开跑一轮三阶段剧本（教 → 隔 → 考）";
-      cost.style.display="none";
-      meta.innerHTML=esc((e&&e.note)||"暂无消耗预估数据")+"。";
-    }
-    wrap.style.display="flex";
-    requestAnimationFrame(()=>{wrap.classList.add("on");
-      if(G){G.fromTo(".cm-panel",{y:12,scale:.94,opacity:0},{y:0,scale:1,opacity:1,duration:.32,ease:"back.out(1.4)"});}});
-    const close=(v)=>{wrap.classList.remove("on");wrap.style.display="none";res(v);
-      ok.removeEventListener("click",onOk);cancel.removeEventListener("click",onNo);
-      document.removeEventListener("keydown",onKey);};
-    const onOk=()=>close(true),onNo=()=>close(false);
-    const onKey=(ev)=>{if(ev.key==="Escape")close(false);else if(ev.key==="Enter")close(true);};
-    ok.addEventListener("click",onOk);cancel.addEventListener("click",onNo);
-    document.addEventListener("keydown",onKey);
-  });
-}
 $("#btnStart").addEventListener("click",async()=>{
   const body={adapter:$("#fAdapter").value,cases:$("#fCases").value,judge:$("#fJudge").value};
-  if(!(await confirmRun(body)))return;
   try{await api("/api/start",{method:"POST",body:JSON.stringify(body)})}
   catch(e){
     if(e.status===409){toast("已有评测在跑");}else{toast("启动失败："+e.message);}return}
@@ -1004,7 +948,7 @@ window.addEventListener("load",()=>{
       .from("#nav",{y:-10,opacity:0,duration:.4,ease:"power2.out"}, "-=.2")
       .from("#tab-doctor .card",{y:16,opacity:0,duration:.45,ease:"power2.out"}, "-=.18");
     }
-    loadDoctor();loadCaseDirs();loadAdapters();
+    loadDoctor();loadCaseDirs();
     api("/api/meta").then(d=>{$("#ftVer").textContent="服务端 v"+d.version+" · py"+d.python;}).catch(()=>{});
   });
 });
@@ -1012,17 +956,5 @@ if(document.fonts&&document.fonts.ready){
   document.fonts.ready.then(()=>{initInk();});}
 window.addEventListener("resize",()=>{const b=$('#nav button.on');if(b)initInk();});
 </script>
-<div class="cm-wrap" id="costModal" role="dialog" aria-modal="true" style="display:none">
-  <div class="cm-panel">
-    <h3>开跑前确认</h3>
-    <div class="cm-sub" id="cmSub"></div>
-    <div class="cm-cost" id="cmCost" style="display:none"><b id="cmTokens"></b><span id="cmTokensSub"></span></div>
-    <div class="cm-meta" id="cmMeta"></div>
-    <div class="cm-actions">
-      <button class="ghostbtn" id="cmCancel">取消</button>
-      <button class="act" id="cmOk">确认开跑</button>
-    </div>
-  </div>
-</div>
 </body>
 </html>

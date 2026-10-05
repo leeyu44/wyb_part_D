@@ -21,10 +21,12 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
+from memhall.adapters.base import (
+    AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW, fingerprint_tree,
+)
 from memhall.schema.evidence import (
     ActionDump,
     MemoryEntry,
@@ -71,14 +73,9 @@ class OpenCodeAdapter(AgentAdapter):
         return self._exe
 
     def _write_config(self) -> None:
-        # 统一模型模式（GATEWAY_URL）优先：走本地网关，真凭据只在网关进程
-        from memhall.gateway import gateway_settings
-        gw = gateway_settings("opencode")
-        base = (gw["base_url"] if gw
-                else os.environ.get("AGENT_LLM_BASE_URL", "")).rstrip("/")
-        key = gw["key"] if gw else os.environ.get("AGENT_LLM_KEY", "")
-        self.model = (gw["model"] if gw
-                      else os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus"))
+        base = os.environ.get("AGENT_LLM_BASE_URL", "").rstrip("/")
+        key = os.environ.get("AGENT_LLM_KEY", "")
+        self.model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
         if not (base and key):
             raise AgentUnavailable("缺 AGENT_LLM_BASE_URL / AGENT_LLM_KEY（检查 .env）")
         self.model_ref = f"memhall-gw/{self.model}"
@@ -111,7 +108,7 @@ class OpenCodeAdapter(AgentAdapter):
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        sent = datetime.now(UTC)
+        sent = datetime.now(timezone.utc)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -127,27 +124,18 @@ class OpenCodeAdapter(AgentAdapter):
                 f"opencode 无有效回复(rc={r.returncode}): "
                 f"{(r.stdout or '')[:150]} | {(r.stderr or '')[:150]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(UTC),
+                     reply_at=datetime.now(timezone.utc),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
     def end_session(self, session_id: str) -> None:
         pass  # 单发模式每次独立进程，无长会话
 
-    def version_info(self) -> str | None:
-        try:
-            exe = self._resolve_exe()
-        except Exception:  # noqa: BLE001 未装/未探测到 = 无版本元数据
-            return None
-        from memhall.adapters.base import cli_version
-        return cli_version([exe, "--version"])
-
-
     def dump_memory(self) -> MemorySnapshot:
         entries: list[MemoryEntry] = []
         agents_md = self.workspace / "AGENTS.md"
         if agents_md.exists():
-            mtime = datetime.fromtimestamp(agents_md.stat().st_mtime, UTC)
+            mtime = datetime.fromtimestamp(agents_md.stat().st_mtime, timezone.utc)
             entries.append(MemoryEntry(
                 entry_id="agents-md",
                 content=agents_md.read_text(encoding="utf-8", errors="replace")[:2000],
@@ -162,10 +150,10 @@ class OpenCodeAdapter(AgentAdapter):
                     content=f"[{rel}] "
                             + p.read_text(encoding="utf-8", errors="replace")[:500],
                     created_at=datetime.fromtimestamp(
-                        p.stat().st_mtime, UTC),
+                        p.stat().st_mtime, timezone.utc),
                     source_turn=str(rel)))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(UTC),
+                              dumped_at=datetime.now(timezone.utc),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:
@@ -180,6 +168,9 @@ class OpenCodeAdapter(AgentAdapter):
                     and not any(part.startswith(".") for part in p.parts)):
                 out.append(p.relative_to(self.workspace).as_posix())
         return out
+
+    def fs_snapshot_hashes(self) -> dict[str, str] | None:
+        return fingerprint_tree(self.workspace)
 
     def clock_shift(self, days: int) -> None:
         if days == 0:

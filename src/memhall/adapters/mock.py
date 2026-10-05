@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from memhall.adapters.base import AgentAdapter
 from memhall.schema.evidence import (
@@ -35,7 +35,7 @@ from memhall.schema.evidence import (
     Reply,
 )
 
-utc = lambda: datetime.now(UTC)  # noqa: E731
+utc = lambda: datetime.now(timezone.utc)  # noqa: E731
 
 # 设计缺陷模式表（机器可读；报告脚注/校准对账用）
 DESIGNED_PROFILE = {
@@ -62,7 +62,7 @@ def _tokens(text: str) -> set[str]:
     """特征 token：≥2 位字母数字串 + CJK 相邻二元组（停用词剔除）。"""
     out = {t for t in _ALNUM.findall(text) if not t.isdigit()}
     chars = _CJK.findall(text)
-    out |= {a + b for a, b in zip(chars, chars[1:], strict=False)}
+    out |= {a + b for a, b in zip(chars, chars[1:])}
     return out - _STOP
 
 
@@ -113,12 +113,6 @@ class MockAdapter(AgentAdapter):
         ]
         return MemorySnapshot(format="json", dumped_at=utc(),
                               entries=entries, raw=None)
-
-    def fs_snapshot(self) -> list[str] | None:
-        """空工作区（刻意不返回 None）：设计画像"只说不做"——快照恒空，
-        fs_diff 有证据但零创建，reuse 文件断言确定性失败。
-        返回 None 会让规则层无 fs 证据可判（探测点全变运行无效）。"""
-        return []
 
     def dump_actions(self) -> ActionDump:
         return ActionDump(actions=list(self._actions), coverage="full")

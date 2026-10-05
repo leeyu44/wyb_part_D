@@ -1,55 +1,109 @@
-"""三阶段剧本编排器（D 主线，正式 runner 实现）。
+"""Three-phase scenario runner and durable evidence recorder.
 
-职责：按 MemoryCase 剧本驱动适配器、按契约 03 采集证据、落盘 JSONL + manifest。
-不评判——判定全部在 scoring/engine.py。
+The runner owns orchestration and evidence persistence. Scoring remains isolated in
+memhall.scoring so a completed evidence bundle can always be scored again.
 """
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
+import importlib.metadata
 import json
-import logging
+import locale
+import os
 import platform
 import subprocess
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Mapping
 
-import yaml
-
-from memhall import __version__
-from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter
-from memhall.cost import summarize, usage_delta, usage_snapshot
+from memhall.adapters.base import AgentAdapter, NO_WINDOW
 from memhall.schema.evidence import (
+    ActionDump,
     Evidence,
     EvidencePhase,
     EvidenceType,
     FsDiff,
     FsDiffEntry,
+    MemorySnapshot,
     Reply,
 )
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.rules import EvidenceStore
 
-log = logging.getLogger(__name__)
-
 
 def _utc() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
-def _sha256(payload: dict) -> str:
-    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+def _canonical_json(payload: Any) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+
+
+def _sha256(payload: Any) -> str:
+    return hashlib.sha256(_canonical_json(payload)).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as stream:
+        json.dump(payload, stream, ensure_ascii=False, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(tmp, path)
 
 
 def _phase_enum(name: str) -> EvidencePhase:
     return EvidencePhase(name)
 
 
+def _error_text(error: BaseException) -> str:
+    return f"{type(error).__name__}: {error}"
+
+
+def _snapshot_digest(snapshot: Mapping[str, str] | None) -> str:
+    if snapshot is None:
+        return "unavailable"
+    return f"sha256:{_sha256(dict(sorted(snapshot.items())))};n={len(snapshot)}"
+
+
+def _fs_diff(before: Mapping[str, str] | None,
+             after: Mapping[str, str] | None) -> FsDiff:
+    if before is None or after is None:
+        return FsDiff(before_snapshot=_snapshot_digest(before),
+                      after_snapshot=_snapshot_digest(after), entries=[])
+    old_paths = set(before)
+    new_paths = set(after)
+    entries = [FsDiffEntry(path=path, change="created")
+               for path in sorted(new_paths - old_paths)]
+    entries.extend(FsDiffEntry(path=path, change="modified")
+                   for path in sorted(old_paths & new_paths)
+                   if before[path] != after[path])
+    entries.extend(FsDiffEntry(path=path, change="deleted")
+                   for path in sorted(old_paths - new_paths))
+    return FsDiff(before_snapshot=_snapshot_digest(before),
+                  after_snapshot=_snapshot_digest(after), entries=entries)
+
+
 class CaseRunner:
-    """单用例执行器：剧本 → 适配器调用 → 证据采集落盘。"""
+    """Run one scenario and append each evidence record before continuing."""
 
     def __init__(self, adapter: AgentAdapter, case: MemoryCase, run_id: str,
                  evidence_dir: Path, on_event=None):
@@ -61,11 +115,22 @@ class CaseRunner:
         self.store = EvidenceStore()
         self._seq = 0
         self.clock_offset = 0
+        self.runtime_error: str | None = None
+        self.cleanup_error: str | None = None
+        self.capture_errors: list[str] = []
+        self.phase_results: list[dict[str, Any]] = []
+        self.agent_tokens = _new_token_counter()
+        self.started_at = _utc()
 
-    def _collect(self, phase: str, etype: EvidenceType, payload: dict) -> None:
+    @property
+    def evidence_path(self) -> Path:
+        return self.evidence_dir / "evidence.jsonl"
+
+    def _collect(self, phase: str, etype: EvidenceType,
+                 payload: dict[str, Any]) -> Evidence:
         self._seq += 1
         ev = Evidence(
-            evidence_id=f"ev-{self._seq:06d}",
+            evidence_id=f"ev-{self.case.case_id}-{self._seq:04d}",
             run_id=self.run_id,
             case_id=self.case.case_id,
             phase=_phase_enum(phase),
@@ -76,122 +141,243 @@ class CaseRunner:
             sha256=_sha256(payload),
         )
         self.store.add(ev)
+        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        with self.evidence_path.open("a", encoding="utf-8", newline="\n") as stream:
+            stream.write(ev.model_dump_json() + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        _safe_emit(self.on_event, {
+            "type": "evidence", "case": self.case.case_id,
+            "phase": phase, "evidence_type": etype.value,
+            "evidence_id": ev.evidence_id,
+        })
+        return ev
+
+    def _mark_runtime_error(self, where: str, error: BaseException | str) -> str:
+        detail = error if isinstance(error, str) else _error_text(error)
+        message = f"{where}: {detail}"
+        if self.runtime_error is None:
+            self.runtime_error = message
+        _safe_emit(self.on_event, {
+            "type": "err", "case": self.case.case_id, "msg": message,
+        })
+        return message
+
+    def _safe_fs_snapshot(self, phase: str, point: str) -> dict[str, str] | None:
+        try:
+            return self.adapter.fs_snapshot_hashes()
+        except Exception as error:
+            self.capture_errors.append(
+                f"{phase}.{point}.fs_snapshot: {_error_text(error)}")
+            return None
+
+    def _capture_memory(self, phase: str, point: str) -> None:
+        try:
+            payload = self.adapter.dump_memory().model_dump(mode="json")
+        except Exception as error:
+            message = f"{phase}.{point}.memory: {_error_text(error)}"
+            self.capture_errors.append(message)
+            payload = MemorySnapshot(
+                format="none", dumped_at=_utc(), entries=[], raw=None,
+            ).model_dump(mode="json")
+            payload["capture_error"] = message
+        payload["capture_point"] = point
+        self._collect(phase, EvidenceType.MEMORY_SNAPSHOT, payload)
+        _safe_emit(self.on_event, {
+            "type": "memory", "case": self.case.case_id,
+            "phase": phase, "n": len(payload.get("entries", [])),
+            "capture_point": point,
+        })
+
+    def _capture_actions(self, phase: str) -> None:
+        try:
+            payload = self.adapter.dump_actions().model_dump(mode="json")
+        except Exception as error:
+            message = f"{phase}.actions: {_error_text(error)}"
+            self.capture_errors.append(message)
+            payload = ActionDump(actions=[], coverage="unknown").model_dump(mode="json")
+            payload["capture_error"] = message
+        self._collect(phase, EvidenceType.ACTIONS, payload)
+
+    def _capture_phase_tail(self, phase: str,
+                            before_fs: Mapping[str, str] | None) -> None:
+        self._capture_memory(phase, "phase_end")
+        self._capture_actions(phase)
+        after_fs = self._safe_fs_snapshot(phase, "end")
+        payload = _fs_diff(before_fs, after_fs).model_dump(mode="json")
+        if before_fs is None or after_fs is None:
+            payload["capture_error"] = "file snapshot unavailable"
+        self._collect(phase, EvidenceType.FS_DIFF, payload)
+
+    def _capture_skipped_phase(self, phase: str, reason: str) -> None:
+        now = _utc()
+        reply = Reply(
+            session_id="none", text=f"[RUNTIME_ERROR] {reason}",
+            sent_at=now, reply_at=now, latency_ms=0,
+        )
+        self._collect(phase, EvidenceType.DIALOGUE, {
+            "messages": [], "replies": [reply.model_dump(mode="json")],
+            "runtime_error": reason, "skipped": True,
+        })
+        memory = MemorySnapshot(
+            format="none", dumped_at=now, entries=[], raw=None,
+        ).model_dump(mode="json")
+        memory.update({"capture_point": "phase_end", "skipped": True})
+        self._collect(phase, EvidenceType.MEMORY_SNAPSHOT, memory)
+        actions = ActionDump(actions=[], coverage="unknown").model_dump(mode="json")
+        actions["skipped"] = True
+        self._collect(phase, EvidenceType.ACTIONS, actions)
+        fs_payload = FsDiff(
+            before_snapshot="skipped", after_snapshot="skipped", entries=[],
+        ).model_dump(mode="json")
+        fs_payload["skipped"] = True
+        self._collect(phase, EvidenceType.FS_DIFF, fs_payload)
+        self.phase_results.append({"phase": phase, "status": "skipped",
+                                   "error": reason})
+
+    def _apply_system_events(self, phase_name: str, events) -> None:
+        if events is None:
+            return
+        if events.rollback:
+            self.adapter.rollback()
+        if events.reboot:
+            self.adapter.reboot()
+        if events.clock_shift_days:
+            self.adapter.clock_shift(events.clock_shift_days)
+            self.clock_offset += events.clock_shift_days
+        if events.network_off:
+            self.adapter.network_off()
+        _safe_emit(self.on_event, {
+            "type": "system_event", "case": self.case.case_id,
+            "phase": phase_name,
+            "reboot": events.reboot,
+            "clock_shift_days": events.clock_shift_days,
+            "network_off": events.network_off,
+            "rollback": events.rollback,
+        })
 
     def run(self) -> EvidenceStore:
-        # 用例快照先行：run 目录自包含，report/换机重渲染不依赖源码树用例库
-        # （heldout 题目文本不入仓库，快照是它唯一的持久载体）
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
-        (self.evidence_dir / "case.yaml").write_text(
-            yaml.safe_dump(self.case.model_dump(mode="json"),
-                           allow_unicode=True, sort_keys=False),
-            encoding="utf-8")
-        self.adapter.reset()
-        # R02/R23：reset 彻底性防线——残留记忆会把上一个 case 的答案带进来
-        # （同问异答题库里是定向毒药），宁可本 case 中止也不静默污染
-        self.adapter.verify_reset()
-        base_fs = self.adapter.fs_snapshot()
+        _atomic_json(self.evidence_dir / "case.json", self._status("running"))
         session_id = "s-01"
+        next_phase = 0
         try:
-            for phase in self.case.phases:
-                se = phase.system_events
-                if se is not None and se.clock_shift_days:
-                    try:
-                        self.adapter.clock_shift(se.clock_shift_days)
-                    except AdapterError as e:
-                        # 拨钟不支持（如 Windows 本机适配器）→ 本 case 运行无效，
-                        # 不能让一个 case 的环境限制打崩整套
-                        log.warning("%s 拨钟不支持（case 运行无效）: %s",
-                                    self.case.case_id, e)
-                        self._runtime_error = str(e)
-                        break
-                    log.info("%s 拨钟 %+d 天（累计 %+d）", self.case.case_id,
-                             se.clock_shift_days, self.clock_offset + se.clock_shift_days)
-                    self.clock_offset += se.clock_shift_days
+            try:
+                self.adapter.reset()
+            except Exception as error:
+                self._mark_runtime_error("reset", error)
+
+            for phase_index, phase in enumerate(self.case.phases):
+                next_phase = phase_index + 1
+                if self.runtime_error:
+                    self._capture_skipped_phase(phase.name, self.runtime_error)
+                    continue
+
+                phase_started = time.monotonic()
+                before_fs = self._safe_fs_snapshot(phase.name, "start")
                 messages: list[str] = []
                 replies: list[Reply] = []
-                for step in phase.steps:
-                    text = step.user if step.user is not None else step.task
-                    if text is None:
-                        raise ValueError(f"用例 {self.case.case_id} 阶段 {phase.name} "
-                                         "存在既无 user 也无 task 的步骤")
-                    log.debug("%s 阶段 %s 问: %s", self.case.case_id, phase.name,
-                              text[:60])
-                    messages.append(text)
-                    _safe_emit(self.on_event, {"type": "ask",
-                                               "case": self.case.case_id,
-                                               "phase": phase.name, "q": text})
-                    try:
-                        reply = self.adapter.send(session_id, text)
+                try:
+                    self._apply_system_events(phase.name, phase.system_events)
+                except Exception as error:
+                    self._mark_runtime_error(f"{phase.name}.system_events", error)
+
+                if not self.runtime_error:
+                    for step_index, step in enumerate(phase.steps, start=1):
+                        text = step.user if step.user is not None else step.task
+                        assert text is not None
+                        messages.append(text)
+                        _safe_emit(self.on_event, {
+                            "type": "ask", "case": self.case.case_id,
+                            "phase": phase.name, "q": text,
+                        })
+                        try:
+                            reply = self.adapter.send(session_id, text)
+                        except Exception as error:
+                            detail = self._mark_runtime_error(
+                                f"{phase.name}.step_{step_index}.send", error)
+                            now = _utc()
+                            reply = Reply(
+                                session_id=session_id,
+                                text=f"[RUNTIME_ERROR] {detail}",
+                                sent_at=now, reply_at=now, latency_ms=0,
+                            )
                         replies.append(reply)
-                        _safe_emit(self.on_event, {"type": "reply",
-                                                   "case": self.case.case_id,
-                                                   "phase": phase.name,
-                                                   "a": reply.text,
-                                                   "ms": reply.latency_ms})
-                    except AdapterError as e:
-                        # 契约 01：适配器不可用 -> 后续步骤无意义，case 标运行无效
-                        log.error("%s 阶段 %s 适配器错误: %s", self.case.case_id,
-                                  phase.name, e)
-                        replies.append(Reply(
-                            session_id=session_id,
-                            text=f"[RUNTIME_ERROR] {e}",
-                            sent_at=_utc(), reply_at=_utc(), latency_ms=0))
-                        self._runtime_error = str(e)
-                        _safe_emit(self.on_event, {"type": "err",
-                                                   "case": self.case.case_id,
-                                                   "msg": str(e)})
-                        break
-                # 部分对话也落盘：[RUNTIME_ERROR] 回复标记进证据，判卷层据此
-                # 标 INVALID_RUN——适配器中途挂掉不能静默降级成 omission
-                self._collect(phase.name, EvidenceType.DIALOGUE,
-                              {"messages": messages,
-                               "replies": [r.model_dump(mode="json") for r in replies]})
-                if getattr(self, "_runtime_error", None):
-                    break
-                # inject 后加采记忆快照（写入时机测试的数据源）
-                if phase.name == "inject":
-                    snap = self.adapter.dump_memory()
-                    self._collect("inject", EvidenceType.MEMORY_SNAPSHOT,
-                                  snap.model_dump(mode="json"))
-                    _safe_emit(self.on_event, {"type": "memory",
-                                               "case": self.case.case_id,
-                                               "n": len(snap.entries)})
-                if phase.end_session:
-                    self.adapter.end_session(session_id)
-                    n = int(session_id.split("-")[1]) + 1
-                    session_id = f"s-{n:02d}"
-            # probe 结束后全量采集
-            snap = self.adapter.dump_memory()
-            self._collect("probe", EvidenceType.MEMORY_SNAPSHOT, snap.model_dump(mode="json"))
-            _safe_emit(self.on_event, {"type": "memory",
-                                       "case": self.case.case_id,
-                                       "n": len(snap.entries),
-                                       "final": True})
-            dump = self.adapter.dump_actions()
-            self._collect("probe", EvidenceType.ACTIONS, dump.model_dump(mode="json"))
+                        _record_tokens(self.agent_tokens, reply.token_usage)
+                        _safe_emit(self.on_event, {
+                            "type": "reply", "case": self.case.case_id,
+                            "phase": phase.name, "a": reply.text,
+                            "ms": reply.latency_ms,
+                        })
+                        if phase.name == "inject" and not self.runtime_error:
+                            self._capture_memory(phase.name, f"after_step_{step_index}")
+                        if self.runtime_error:
+                            break
+
+                dialogue: dict[str, Any] = {
+                    "messages": messages,
+                    "replies": [reply.model_dump(mode="json") for reply in replies],
+                }
+                if self.runtime_error:
+                    dialogue["runtime_error"] = self.runtime_error
+                self._collect(phase.name, EvidenceType.DIALOGUE, dialogue)
+                self._capture_phase_tail(phase.name, before_fs)
+
+                if phase.end_session and not self.runtime_error:
+                    try:
+                        self.adapter.end_session(session_id)
+                        number = int(session_id.split("-")[1]) + 1
+                        session_id = f"s-{number:02d}"
+                    except Exception as error:
+                        self._mark_runtime_error(f"{phase.name}.end_session", error)
+
+                if phase.wait_minutes and not self.runtime_error:
+                    time.sleep(phase.wait_minutes * 60)
+
+                self.phase_results.append({
+                    "phase": phase.name,
+                    "status": "invalid" if self.runtime_error else "completed",
+                    "duration_ms": int((time.monotonic() - phase_started) * 1000),
+                    "evidence_count": self._seq,
+                })
+        except BaseException as error:
+            self._mark_runtime_error("runner", error)
+            for phase in self.case.phases[next_phase:]:
+                self._capture_skipped_phase(phase.name, self.runtime_error)
+            raise
         finally:
-            self.adapter.clock_restore()
-        # 文件系统 diff（适配器支持时）：before 快照 vs after 快照
-        after_fs = self.adapter.fs_snapshot()
-        if base_fs is not None and after_fs is not None:
-            created = sorted(set(after_fs) - set(base_fs))
-            deleted = sorted(set(base_fs) - set(after_fs))
-            fs_diff = FsDiff(entries=[FsDiffEntry(path=p, change="created")
-                                      for p in created]
-                             + [FsDiffEntry(path=p, change="deleted") for p in deleted],
-                             before_snapshot=f"n={len(base_fs)}",
-                             after_snapshot=f"n={len(after_fs)}")
-            self._collect("probe", EvidenceType.FS_DIFF, fs_diff.model_dump(mode="json"))
-        self._flush()
-        log.debug("%s 证据落盘 %d 条", self.case.case_id, len(self.store.items()))
+            try:
+                self.adapter.network_restore()
+            except Exception as error:
+                self.cleanup_error = f"network_restore: {_error_text(error)}"
+            try:
+                self.adapter.clock_restore()
+            except Exception as error:
+                detail = f"clock_restore: {_error_text(error)}"
+                self.cleanup_error = (f"{self.cleanup_error}; {detail}"
+                                      if self.cleanup_error else detail)
+            if self.cleanup_error:
+                self._mark_runtime_error("cleanup", self.cleanup_error)
+            status = "invalid" if self.runtime_error else "completed"
+            _atomic_json(self.evidence_dir / "case.json", self._status(status))
         return self.store
 
-    def _flush(self) -> None:
-        self.evidence_dir.mkdir(parents=True, exist_ok=True)
-        path = self.evidence_dir / "evidence.jsonl"
-        with path.open("a", encoding="utf-8") as f:
-            for ev in self.store.items():
-                f.write(ev.model_dump_json() + "\n")
+    def _status(self, status: str) -> dict[str, Any]:
+        finished = _utc() if status != "running" else None
+        return {
+            "case_id": self.case.case_id,
+            "status": status,
+            "started_at": self.started_at.isoformat(),
+            "finished_at": finished.isoformat() if finished else None,
+            "runtime_error": self.runtime_error,
+            "cleanup_error": self.cleanup_error,
+            "capture_errors": self.capture_errors,
+            "phases": self.phase_results,
+            "evidence_count": self._seq,
+            "agent_tokens": _token_summary(self.agent_tokens),
+            "evidence_sha256": (_file_sha256(self.evidence_path)
+                                if self.evidence_path.exists() else None),
+        }
 
 
 def _git_hash() -> str:
@@ -205,108 +391,255 @@ def _git_hash() -> str:
         return "unknown"
 
 
-def _safe_emit(on_event, payload: dict) -> None:
-    """事件流给 UI 看过程用——它坏掉不能打崩评测。"""
+def _source_hash() -> str:
+    """Fingerprint installed source even when a Git checkout is unavailable."""
+    package_root = Path(__file__).resolve().parents[1]
+    files: dict[str, str] = {}
+    for path in sorted(package_root.rglob("*")):
+        relative = path.relative_to(package_root)
+        if (not path.is_file() or "__pycache__" in relative.parts
+                or path.suffix in {".pyc", ".pyo"}):
+            continue
+        files[relative.as_posix()] = _file_sha256(path)
+    return _sha256(files)
+
+
+def _package_version() -> str:
+    try:
+        return importlib.metadata.version("memhall")
+    except importlib.metadata.PackageNotFoundError:
+        try:
+            from memhall import __version__
+            return __version__
+        except ImportError:
+            return "unknown"
+
+
+def _dependency_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for name in ("pydantic", "PyYAML", "matplotlib", "paramiko", "fastapi"):
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+    return versions
+
+
+def _environment(adapter: AgentAdapter) -> dict[str, Any]:
+    host = {
+        "os": platform.platform(),
+        "python": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        "machine": platform.machine(),
+        "locale": locale.getlocale(),
+        "timezone": time.tzname,
+    }
+    try:
+        target = adapter.environment_info()
+    except Exception as error:
+        target = {"error": _error_text(error)}
+    return {"runner_host": host, "target": target,
+            "dependencies": _dependency_versions()}
+
+
+def _case_fingerprints(cases: list[MemoryCase]) -> tuple[dict[str, str], str]:
+    hashes = {
+        case.case_id: _sha256(case.model_dump(mode="json", by_alias=True))
+        for case in cases
+    }
+    return hashes, _sha256(hashes)
+
+
+def _bundle_hash(case_results: list[dict[str, Any]]) -> str:
+    files = {
+        result["case_id"]: result.get("evidence_sha256")
+        for result in case_results
+    }
+    return _sha256(files)
+
+
+def _new_token_counter() -> dict[str, int]:
+    return {
+        "requests": 0,
+        "reported_replies": 0,
+        "complete_replies": 0,
+        "prompt": 0,
+        "completion": 0,
+    }
+
+
+def _record_tokens(counter: dict[str, int], usage: Any) -> None:
+    counter["requests"] += 1
+    if usage is None:
+        return
+    prompt = getattr(usage, "prompt", None)
+    completion = getattr(usage, "completion", None)
+    if prompt is None and completion is None:
+        return
+    counter["reported_replies"] += 1
+    if prompt is not None and completion is not None:
+        counter["complete_replies"] += 1
+    counter["prompt"] += int(prompt or 0)
+    counter["completion"] += int(completion or 0)
+
+
+def _merge_token_summary(counter: dict[str, int], summary: Mapping[str, Any]) -> None:
+    for field in counter:
+        counter[field] += int(summary.get(field, 0) or 0)
+
+
+def _token_summary(counter: Mapping[str, int]) -> dict[str, Any]:
+    requests = int(counter.get("requests", 0))
+    reported = int(counter.get("reported_replies", 0))
+    prompt = int(counter.get("prompt", 0))
+    completion = int(counter.get("completion", 0))
+    return {
+        "requests": requests,
+        "reported_replies": reported,
+        "unreported_replies": requests - reported,
+        "complete_replies": int(counter.get("complete_replies", 0)),
+        "coverage": round(reported / requests, 4) if requests else None,
+        "prompt": prompt,
+        "completion": completion,
+        "total": prompt + completion,
+    }
+
+
+def _aggregate_agent_tokens(case_results: list[dict[str, Any]]) -> dict[str, Any]:
+    counter = _new_token_counter()
+    for result in case_results:
+        _merge_token_summary(counter, result.get("agent_tokens", {}))
+    return _token_summary(counter)
+
+
+def _safe_emit(on_event, payload: dict[str, Any]) -> None:
+    """UI progress must never affect the measurement."""
     if on_event is None:
         return
-    with contextlib.suppress(Exception):
+    try:
         on_event(payload)
+    except Exception:
+        pass
 
 
 def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
-              adapter_name: str, case_source: str = "",
-              on_case_done=None, on_event=None) -> tuple[str, list[EvidenceStore]]:
-    """跑整套用例，落盘 manifest，返回 (run_id, 每 case 的证据视图)。
-
-    on_case_done(case_id, i, n)：每用例跑完后回调（UI 进度流用）；
-        回调抛异常即中止（配合 UI 的停止按钮，已完成的用例证据已落盘）。
-    on_event(ev)：逐条过程事件（ask/reply/memory/err/case_start），
-        供 UI 直播问答过程；回调异常被吞，不影响评测。
-    """
-    run_id = _utc().strftime("%Y%m%d-%H%M%S") + f"-{adapter_name}"
-    # 快机同秒跑两轮（mock 单轮 2 秒级）会互相覆盖，冲突时加序号后缀
-    base_dir = out_dir / run_id
-    run_dir, k = base_dir, 2
-    while run_dir.exists():
-        run_dir = out_dir / f"{run_id}-{k}"
-        k += 1
-    run_id = run_dir.name
-    log.info("评测开始: %s × %d 用例 × %d 探测点 → %s", adapter_name, len(cases),
-             sum(len(c.probes) for c in cases), run_dir)
-    stores: list[EvidenceStore] = []
-    failed: list[str] = []
-    usage_before = usage_snapshot()
-    try:
-        for i, case in enumerate(cases):
-            log.info("[%d/%d] %s 开跑", i + 1, len(cases), case.case_id)
-            t0 = time.monotonic()
-            _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
-                                  "i": i + 1, "n": len(cases)})
-            runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
-                                on_event=on_event)
-            # R23：单 case 未预期异常不再引爆整套马拉松——记录失败续跑，
-            # 已完成用例的证据/manifest 照常落盘（40 题挂 1 题不报废整轮）
-            try:
-                stores.append(runner.run())
-            except Exception:  # noqa: BLE001 隔离层必须兜住一切
-                log.exception("[%d/%d] %s 异常中止（记入 failed_cases，续跑）",
-                              i + 1, len(cases), case.case_id)
-                failed.append(case.case_id)
-                continue
-            log.info("[%d/%d] %s 完成（%.1fs）", i + 1, len(cases), case.case_id,
-                     time.monotonic() - t0)
-            if on_case_done is not None:
-                on_case_done(case.case_id, i + 1, len(cases))
-    finally:
-        _write_manifest(run_dir, run_id, adapter_name, case_source, cases,
-                        failed, usage_before, adapter)
-    log.info("评测完成: run_id=%s", run_id)
-    return run_id, stores
-
-
-def pair_stores(cases: list[MemoryCase],
-                stores: list[EvidenceStore]) -> list[tuple[MemoryCase, EvidenceStore]]:
-    """stores 与 cases 按证据内 case_id 配对（failed_cases 无 store，跳过）。"""
-    by_id: dict[str, EvidenceStore] = {}
-    for s in stores:
-        items = s.items()
-        if items:
-            by_id.setdefault(items[0].case_id, s)
-    return [(c, st) for c in cases if (st := by_id.get(c.case_id)) is not None]
-
-
-def _write_manifest(run_dir: Path, run_id: str, adapter_name: str,
-                    case_source: str, cases: list[MemoryCase], failed: list[str],
-                    usage_before, adapter: AgentAdapter) -> None:
-    manifest = {
+              adapter_name: str, on_case_done=None, on_event=None, *,
+              case_sample_seed: int = 42, repeat_of: str | None = None,
+              repeat_group: str | None = None, repeat_index: int = 1,
+              repeat_count: int = 1) -> tuple[str, list[EvidenceStore]]:
+    """Run a deterministic case list and maintain a crash-readable manifest."""
+    started_at = _utc()
+    run_id = started_at.strftime("%Y%m%d-%H%M%S-%f") + f"-{adapter_name}"
+    run_dir = out_dir / run_id
+    case_hashes, cases_version = _case_fingerprints(cases)
+    git_hash = _git_hash()
+    source_hash = _source_hash()
+    manifest: dict[str, Any] = {
         "run_id": run_id,
         "tool": "memhall",
-        "tool_version": __version__,
-        "python": platform.python_version(),
-        "schema_version": "0.1",
+        "tool_version": _package_version(),
+        "schema_version": "0.2",
+        "status": "running",
         "adapter": adapter_name,
-        "case_source": case_source,
-        "git_hash": _git_hash(),
-        "started_at": run_id[:15],
-        "finished_at": _utc().isoformat(),
-        "cases": [c.case_id for c in cases],
-        "n_probes_total": sum(len(c.probes) for c in cases),
+        "agent": adapter_name,
+        "git_hash": git_hash,
+        "source_sha256": source_hash,
+        "code_version": f"sha256:{source_hash}",
+        "started_at": started_at.isoformat(),
+        "finished_at": None,
+        "cases": [case.case_id for case in cases],
+        "case_hashes": case_hashes,
+        "cases_version": f"sha256:{cases_version}",
+        "case_capabilities": {
+            case.case_id: case.capability.value for case in cases
+        },
+        "case_phases": {
+            case.case_id: [phase.name for phase in case.phases] for case in cases
+        },
+        "case_sample_seed": case_sample_seed,
+        "n_probes_total": sum(len(case.probes) for case in cases),
+        "repeat_of": repeat_of,
+        "repeat_group": repeat_group,
+        "repeat_index": repeat_index,
+        "repeat_count": repeat_count,
+        "env": _environment(adapter),
+        "cost": {
+            "agent_tokens": _token_summary(_new_token_counter()),
+            "judge_tokens": {"mode": "not_run", "requests": 0},
+        },
+        "case_results": [],
+        "evidence_bundle_sha256": None,
     }
-    if failed:
-        manifest["failed_cases"] = failed
-    # 网关记账差值（直连模式/无记账文件时为 None，不落键）
-    token_usage = summarize(usage_delta(usage_before, usage_snapshot()))
-    if token_usage:
-        manifest["token_usage"] = token_usage
-        log.info("本轮网关记账: %d 请求 / %d tokens",
-                 token_usage["requests"], token_usage["total_tokens"])
-    # 被测智能体版本（报告可复现性元数据；探测失败静默跳过）
+    cases_snapshot = {
+        "schema_version": "0.1",
+        "cases": [case.model_dump(mode="json", by_alias=True) for case in cases],
+    }
+    _atomic_json(run_dir / "cases.json", cases_snapshot)
+    manifest["cases_snapshot_sha256"] = _file_sha256(run_dir / "cases.json")
+    _atomic_json(run_dir / "manifest.json", manifest)
+
+    stores: list[EvidenceStore] = []
+    caught: BaseException | None = None
     try:
-        version = adapter.version_info()
-    except Exception:  # noqa: BLE001 元数据探测不阻塞评测
-        version = None
-    if version:
-        manifest["agent_version"] = version
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        for index, case in enumerate(cases, start=1):
+            _safe_emit(on_event, {
+                "type": "case_start", "case": case.case_id,
+                "i": index, "n": len(cases),
+            })
+            runner = CaseRunner(
+                adapter, case, run_id, run_dir / "cases" / case.case_id,
+                on_event=on_event,
+            )
+            try:
+                store = runner.run()
+            except BaseException:
+                status_path = runner.evidence_dir / "case.json"
+                if status_path.is_file():
+                    result = json.loads(status_path.read_text(encoding="utf-8"))
+                    manifest["case_results"].append(result)
+                    manifest["cost"]["agent_tokens"] = _aggregate_agent_tokens(
+                        manifest["case_results"])
+                    manifest["evidence_bundle_sha256"] = _bundle_hash(
+                        manifest["case_results"])
+                    _atomic_json(run_dir / "manifest.json", manifest)
+                raise
+            stores.append(store)
+            result = json.loads(
+                (runner.evidence_dir / "case.json").read_text(encoding="utf-8")
+            )
+            manifest["case_results"].append(result)
+            manifest["cost"]["agent_tokens"] = _aggregate_agent_tokens(
+                manifest["case_results"])
+            manifest["evidence_bundle_sha256"] = _bundle_hash(
+                manifest["case_results"])
+            _atomic_json(run_dir / "manifest.json", manifest)
+            if on_case_done is not None:
+                try:
+                    on_case_done(case.case_id, index, len(cases))
+                except Exception:
+                    pass
+    except BaseException as error:
+        caught = error
+        manifest["status"] = "aborted"
+        manifest["error"] = _error_text(error)
+        raise
+    finally:
+        try:
+            adapter.close()
+        except Exception as error:
+            manifest["adapter_close_error"] = _error_text(error)
+            manifest["status"] = "aborted"
+        manifest["finished_at"] = _utc().isoformat()
+        if caught is None and "adapter_close_error" not in manifest:
+            manifest["status"] = "completed"
+        manifest["n_cases_completed"] = len(manifest["case_results"])
+        manifest["n_cases_invalid"] = sum(
+            result.get("status") != "completed"
+            for result in manifest["case_results"]
+        )
+        manifest["evidence_bundle_sha256"] = _bundle_hash(
+            manifest["case_results"])
+        manifest["cost"]["agent_tokens"] = _aggregate_agent_tokens(
+            manifest["case_results"])
+        _atomic_json(run_dir / "manifest.json", manifest)
+    return run_id, stores

@@ -18,10 +18,12 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
+from memhall.adapters.base import (
+    AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW, fingerprint_tree,
+)
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
 _SEND_MIN_INTERVAL = float(os.environ.get("QWEN_SEND_INTERVAL", "10"))
@@ -53,10 +55,10 @@ class LocalQwenAdapter(AgentAdapter):
 
     def _resolve_exe(self) -> str:
         if self._exe is None:
-            from memhall.discovery import ADAPTER_CLI, find_cli
-            exe = find_cli(*ADAPTER_CLI["qwen"])
+            from memhall.discovery import _which
+            exe = _which("qwen")
             if not exe:
-                raise AgentUnavailable("PATH 与 ~/.local/bin 均找不到 qwen（npm i -g @qwen-code/qwen-code）")
+                raise AgentUnavailable("PATH 里找不到 qwen（npm i -g @qwen-code/qwen-code）")
             self._exe = exe
         return self._exe
 
@@ -70,23 +72,12 @@ class LocalQwenAdapter(AgentAdapter):
                 f"qwen 未配置：{src} 不存在（先跑一次 qwen 完成网关配置）")
         data = json.loads(src.read_text(encoding="utf-8"))
         data.pop("hooks", None)  # clawd-on-desk 钩子不进评测沙箱
-        # 统一模型模式（GATEWAY_URL）：provider baseUrl 改指网关，envKey 由沙箱
-        # env 注入 dummy key——流量必经网关，真凭据只在网关进程
-        from memhall.gateway import gateway_settings
-        gw = gateway_settings("qwen-local")
-        model = (gw["model"] if gw
-                 else os.environ.get("AGENT_LLM_MODEL", ""))  # 与 hermes/kylinbot 同一网关口径
+        model = os.environ.get("AGENT_LLM_MODEL", "")  # 与 hermes/kylinbot 同一网关口径
         if model:
             data.setdefault("model", {})["name"] = model
-        self._gw_env: dict[str, str] = {}
-        for provs in data.get("modelProviders", {}).values():
-            for prov in (provs if isinstance(provs, list) else [provs]):
-                if model:
+            for provs in data.get("modelProviders", {}).values():
+                for prov in provs:
                     prov["id"] = model
-                if gw and prov.get("baseUrl") is not None:
-                    prov["baseUrl"] = gw["base_url"]
-                if gw and prov.get("envKey"):
-                    self._gw_env[prov["envKey"]] = gw["key"]
         shutil.rmtree(self.root, ignore_errors=True)
         self.qwen_home.mkdir(parents=True, exist_ok=True)
         (self.qwen_home / "settings.json").write_text(
@@ -96,14 +87,13 @@ class LocalQwenAdapter(AgentAdapter):
     def _sandbox_env(self) -> dict:
         env = os.environ.copy()
         env["QWEN_HOME"] = str(self.qwen_home)
-        env.update(getattr(self, "_gw_env", {}))
         return env
 
     # ---------- 契约 01 ----------
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        sent = datetime.now(UTC)
+        sent = datetime.now(timezone.utc)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -118,21 +108,12 @@ class LocalQwenAdapter(AgentAdapter):
             raise AgentUnavailable(
                 f"qwen 无有效回复(rc={r.returncode}): {text[:150]} | {(r.stderr or '')[:150]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(UTC),
+                     reply_at=datetime.now(timezone.utc),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
     def end_session(self, session_id: str) -> None:
         pass  # 一次性 prompt 每次独立进程，会话隔离天然成立
-
-    def version_info(self) -> str | None:
-        try:
-            exe = self._resolve_exe()
-        except Exception:  # noqa: BLE001 未装/未探测到 = 无版本元数据
-            return None
-        from memhall.adapters.base import cli_version
-        return cli_version([exe, "--version"])
-
 
     def dump_memory(self) -> MemorySnapshot:
         """全局 QWEN.md + 工作区 QWEN.md（+ 备未来 auto-memory 目录）合并。"""
@@ -155,7 +136,7 @@ class LocalQwenAdapter(AgentAdapter):
                     entry_id=f"m-{len(entries):04d}", content=s,
                     created_at=None, source_turn=rel))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(UTC),
+                              dumped_at=datetime.now(timezone.utc),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:
@@ -170,6 +151,9 @@ class LocalQwenAdapter(AgentAdapter):
                     and not any(part.startswith(".") for part in p.parts)):
                 out.append(p.relative_to(self.workspace).as_posix())
         return out
+
+    def fs_snapshot_hashes(self) -> dict[str, str] | None:
+        return fingerprint_tree(self.workspace)
 
     def clock_shift(self, days: int) -> None:
         if days == 0:

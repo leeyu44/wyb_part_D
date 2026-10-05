@@ -115,7 +115,7 @@ sudo apt install -y python3 python3-venv python3-pip git open-vm-tools fonts-not
 
 | 智能体 | 获取方式 | 备注 |
 |---|---|---|
-| KylinBot | 3.0 桌面版内置 | 入口：任务栏「小K」图标，或应用菜单搜"小K / KylinBot"；首次使用先开预装「Token 中心」登录绑定设备领 token 额度；W1 任务：摸清其记忆存储位置（本地文件 / SQLite，无导出接口则直读） |
+| KylinBot 0.7.5 | VM 内已装 CLI `kylin-bot` | runner 通过 SSH 调用 `agent -m`，记忆从 `~/.kylinbot/workspace/memory/brain.db` 取证；需要 Token 中心额度或 `kylin-bot onboard` 配置模型 |
 | kylin-agent 0.9.5 | ✅ 已装（2026-09-23，`sudo apt install kylin-agent kylin-agent-runtime-cache`，官方 huanghe 源，主包 5MB + runtime-cache 884MB） | openKylin 官方桌面智能体：`/usr/bin/kylin-agent`，应用菜单已有入口；依赖链含 ripgrep/xdotool/xclip/scrot/ffmpeg，runtime-cache 1.1.0 实为**内置 Playwright Chromium**（`/usr/local/share/kylin-agent-runtime/`）——浏览器自动化型，行动轨迹天然可观测；是否需 Token 中心登录 W2 实测。装后根分区剩 ~5G（apt clean 后 83%） |
 | Hermes Agent v0.21.3 | ✅ 已装（2026-09-23 源码部署 `~/.hermes/hermes-agent`，绕网方案见 §7.1） | Nous Research 开源，记忆为 **Python + SQLite 本地存储**（FTS5 检索 + LLM 总结持久化），对 `dump_memory` 适配器最友好；58 插件已加载完毕、启动验证通过；**API key 未配**（W2 `hermes setup`，届时勿走 Nous Portal 网页配对——境外站拉不动）。启动器 `~/.hermes/bin/hermes` 已烘焙清华镜像 + `BROWSER=/bin/true`（防误启动拉 Firefox 卡死） |
 
@@ -125,7 +125,7 @@ sudo apt install -y python3 python3-venv python3-pip git open-vm-tools fonts-not
 
 | 项 | 本机现状 | 用途 |
 |---|---|---|
-| Python | 3.11.9 ✓ | 与目标环境 3.10+ 对齐 |
+| Python | 3.11.9 ✓ | 项目要求 Python ≥3.11；目标机打包时再次记录实际 ABI |
 | git | 2.52 ✓ | 代码托管 Gitee 优先 + GitHub 双推（GitHub 走 ghproxy.net 前缀） |
 | uv | 0.12.16 ✓ | 依赖与虚拟环境管理，`uv init` 建 monorepo |
 | WSL2 | Ubuntu 24.04 ✓ | 仅当 Linux 工具箱：`.deb` 打包先在 WSL 用 `dpkg-deb` 练手，再进虚拟机干净验证 |
@@ -140,9 +140,9 @@ sudo apt install -y python3 python3-venv python3-pip git open-vm-tools fonts-not
 ## 5. 环境就绪验收（W1 末，对应 M1）
 
 - [ ] openKylin 3.0 桌面版虚拟机可开机进入 UKUI 桌面，`clean-baseline` 快照已拍
-- [ ] 虚拟机内 python3 / git 可用，apt 换源完成
-- [ ] Token 中心已登录，KylinBot 可对话
-- [ ] WSL 内 `dpkg-deb --build` 打出空包并解包验证通过
+- [x] 虚拟机内 Python 3.12.2 / git / openKylin apt 源可用
+- [ ] KylinBot 0.7.5 已安装，但 OpenRouter key 未配置，真实对话仍被阻断
+- [x] openKylin 内完整 `.deb` 连续构建两次逐字节一致，普通用户安装与两轮 quick 验收通过（2026-10-04，SHA-256 `c5d0b99b5d1ff92f2914b5adb6c1275a66bddd28caf327b719a6ff92f0c3f882`）
 - [ ] 宿主机 monorepo 初始化完成（按 team-plan.md §4.1 目录结构）
 - [ ] judge 双端点各完成 1 次调用，成本记账链路通（C 验证）
 
@@ -158,11 +158,11 @@ sudo apt install -y python3 python3-venv python3-pip git open-vm-tools fonts-not
 
 - [ ] **磐石架构**：系统回滚 / 维护模式 / KARE 的具体命令与边界（不可变系统下 /home 与可变层行为，记忆落盘审计的依据）——已确认系统为 **OSTree 结构**（`/sysroot/ostree/deploy/`，apt 写入 usr-ovl overlay），回滚命令待 D 实测
 - [ ] **MCP**：智能体调桌面能力是否有可观测日志/事件流（KylinBot 先测；无则行动轨迹退回 auditd 旁路）
-- [x] **KylinBot 记忆存储位置与格式**（2026-09-23 实测）：
-  - 主库 `~/.config/kylin-aiassistant/kylin_aiassistant_database.db`（SQLite）：`RECORD` 表存全部会话消息——`message` 列为 JSON（`author: User/Bot` + 正文 + 元数据），另有 `HISTORY_ID`、`MEETINGRECORD`（会议纪要）表；
-  - 向量索引 `~/.local/share/kylin-ai-vector-engine/kylin-ai-vector-engine.db`（二进制格式，非 SQLite）；
-  - 配置 `~/.config/kylin-aiassistant/{command_instructions.json, settings.ini}`、`~/.config/kylin/promptOrder.conf`；
-  - **结论：KylinBot 无独立"记忆表"，长期记忆 = 对话记录 + 向量检索（RAG）**。适配器含义（契约 01/03）：对话证据直读 `RECORD` 表；`dump_memory` = RECORD 导出 + 向量库文件拷贝；"删一条试试"（删消息行）理论可行，W2 验证生效性
+- [x] **当前 KylinBot CLI 适配器的记忆存储**（2026-09-23 实测）：
+  - 被测入口为 `kylin-bot` 0.7.5；主库是 `~/.kylinbot/workspace/memory/brain.db`（SQLite + FTS5 + `embedding_cache`）；
+  - `memories` 表含 `id/key/content/category/created_at/updated_at/session_id/importance/superseded_by`，可直接形成统一 `MemorySnapshot`；WAL 模式取证需同时处理 `-wal/-shm`；
+  - 会话库为 `~/.kylinbot/workspace/sessions/sessions.db`，人格文件在同一 workspace 的 `SOUL.md`、`IDENTITY.md`、`HEARTBEAT.md`；
+  - `~/.config/kylin-aiassistant/` 和 `~/.local/share/kylin-ai-vector-engine/` 属于 UKUI 内置“小K”GUI 的旧接入面，不是当前 `KylinBotAdapter` 的证据源。
 - [ ] **Token 中心**：额度/消耗是否有可查询接口（manifest 成本记账的系统级数据源）
 
 ### 7.1 工具通道实测（2026-09-23，装机日结论）
@@ -175,3 +175,23 @@ sudo apt install -y python3 python3-venv python3-pip git open-vm-tools fonts-not
 | **主机↔VM 剪贴板** | ⚠️ 待重启验证 | open-vm-tools-desktop 已装（`2:12.3.5-ok1`），剪贴板依赖用户会话内 vmusr，重启后验证 |
 
 虚拟机内网络实测（国内网络环境）：github.com / nodejs.org 可直连；**releases.astral.sh 拉不动**（uv 安装必须绕行：`pip3 install --user uv -i 清华源` 后拷到 `~/.hermes/bin/uv`）；git 已配全局 ghproxy 重写（`url."https://ghproxy.net/https://github.com/".insteadOf`）；PyPI 用清华镜像（`UV_INDEX_URL`）。
+
+## 8. 自动化生命周期与复现验收（2026-10-04）
+
+宿主机配置 `VMX_PATH`、`VM_SNAPSHOT` 和 `VM_*` SSH 凭据后，统一使用：
+
+```bash
+memhall vm prepare        # 回滚固定快照、启动、等 SSH、采环境指纹
+memhall run -a hermes -c cases/full --seed 42 --repeat 2 --prepare-vm
+memhall systest -a hermes
+```
+
+runner 会固化 `cases.json`、被测智能体版本、环境指纹、证据整包哈希和评分产物哈希；
+`memhall verify` 可离线检出记录改写。2026-10-04 已通过 SSH 在 openKylin 3.0 真机
+完成目标机双构建、安装、普通用户运行、boot ID 重启、NTP 拨钟恢复、Linux 多用户
+隔离、NetworkManager 断网恢复、auditd Action 和文件内容哈希验收。当前宿主仍无
+`vmrun`/`VMX_PATH`，因此 VMware 快照回滚是唯一未执行的环境项；KylinBot 能力测试
+另受 OpenRouter key 缺失阻断。auditd 兜底由 `MEMHALL_AUDITD=1` 显式启用，未启用
+时按 unknown/跳过报告，不计为通过。完整结果见
+[docs/openkylin-validation-20261004.md](docs/openkylin-validation-20261004.md)，步骤见
+[docs/reproducibility.md](docs/reproducibility.md)。

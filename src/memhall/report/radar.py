@@ -47,13 +47,10 @@ def render_radar(agent_scores: dict[str, dict[str, float]], out_path: str,
 
     fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={"polar": True})
     for agent, scores in agent_scores.items():
-        # None = 该维未测（不是 0 分）：画 NaN 留缺口，不与"考砸了"混淆
-        values = [v if (v := scores.get(c)) is not None else float("nan")
-                  for c in CAP_ORDER]
+        values = [scores.get(c, 0.0) for c in CAP_ORDER]
         values += values[:1]
         ax.plot(angles, values, linewidth=2, label=agent)
-        if not any(v != v for v in values):  # 全轴有值才填充（NaN 区不涂）
-            ax.fill(angles, values, alpha=0.12)
+        ax.fill(angles, values, alpha=0.12)
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(labels, fontsize=12)
     ax.set_ylim(0, 1)
