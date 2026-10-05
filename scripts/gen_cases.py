@@ -310,8 +310,10 @@ def main() -> int:
                 print(f"!! 不支持的族: {fam}")
                 continue
             path = out / f"{case['case_id']}.yaml"
+            # newline="\n" 强制 LF：文本模式默认会把 \n 翻成 os.linesep，
+            # Windows 生成 CRLF ≠ 档案 LF，逐字节一致性测试挂 + heldout 跨平台字节漂移
             path.write_text(yaml.safe_dump(case, allow_unicode=True, sort_keys=False),
-                            encoding="utf-8")
+                            encoding="utf-8", newline="\n")
             n += 1
             try:
                 shown = path.relative_to(REPO)
