@@ -12,10 +12,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from memhall.adapters.remote import SshChannel, b64
@@ -51,8 +52,8 @@ class SystemTester:
         return HermesAdapter()
 
     def _sudo(self, cmd: str, timeout: int = 60) -> tuple[int, str, str]:
-        return self.ch.run(f"echo '{self.ch.password}' | sudo -S {cmd}",
-                           timeout=timeout)
+        """sudo 走 SshChannel.sudo（密码经 stdin，不落命令行）。"""
+        return self.ch.sudo(cmd, timeout=timeout)
 
     # ---------- 1 重启存活 ----------
 
@@ -66,13 +67,12 @@ class SystemTester:
         if not taught:
             r.passed, r.detail = False, "教学阶段就没写入记忆，无法测重启"
             return r
-        try:
+        with contextlib.suppress(Exception):  # 连接随重启断开，属预期
             self._sudo("shutdown -r now", timeout=8)
-        except Exception:
-            pass  # 连接随重启断开，属预期
         self.ch.close()
         up = self._wait_ssh(self.REBOOT_WAIT_S)
         if not up:
+
             r.passed, r.detail = False, f"{self.REBOOT_WAIT_S}s 内 SSH 未恢复"
             return r
         a2 = self._mk()
@@ -172,19 +172,25 @@ class SystemTester:
             r.passed, r.detail = False, "教学未写入"
             return r
         # 调度脚本：断网 → 离线探测 → 自动恢复（setsid 脱离会话，断网不误伤）
-        # 脚本以 root 跑，~ 会展开成 /root——hermes 用绝对路径 + 正确 HOME
+        # 脚本以 root 跑，~ 会展开成 /root——hermes 用绝对路径 + 正确 HOME；
+        # 网关凭据先落 600 临时 env 文件（b64 传输），脚本 source 后即删
         home = f"/home/{self.ch.user}"
         hermes_bin = HERMES_BIN.replace("~", home)
-        probe = (f"{a._base_env}"  # 与评测 send 同构：网关凭据走环境（root 下无用户配置）
-                 f"echo {b64('你记的我的常用邮箱前缀是什么？')} | base64 -d | "
-                 f"HOME={home} timeout 60 {hermes_bin} chat --query-file - --oneshot "
-                 f"--provider deepseek --model {a._model}")
+        self.ch.run(
+            f"echo {b64(a._llm_env_lines())} | base64 -d > /tmp/mh-offline.env "
+            f"&& chmod 600 /tmp/mh-offline.env")
+        probe = (
+            ". /tmp/mh-offline.env; "
+            f"echo {b64('你记的我的常用邮箱前缀是什么？')} | base64 -d | "
+            f"HOME={home} timeout 60 {hermes_bin} chat --query-file - --oneshot "
+            "--provider deepseek --model \"$DEEPSEEK_MODEL\"")
         script = ("#!/bin/sh\n"
                   "nmcli networking off\n"
                   "sleep 20\n"
                   f"{probe} > /tmp/mh-offline.txt 2>&1; echo probe_rc=$? >> /tmp/mh-offline.txt\n"
                   "sleep 5\n"
-                  "nmcli networking on\n")
+                  "nmcli networking on\n"
+                  "rm -f /tmp/mh-offline.env\n")
         self.ch.run(f"cat > /tmp/mh-offline.sh <<'SEOF'\n{script}SEOF\n"
                     "chmod 700 /tmp/mh-offline.sh")
         self.ch.run("rm -f /tmp/mh-offline.txt")
@@ -258,6 +264,7 @@ def render_systest_chart(results: list[TestResult], out_png: str,
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
     from memhall.report.radar import _setup_font
     _setup_font()
     names = [x.zh for x in results][::-1]

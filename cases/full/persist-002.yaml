@@ -34,7 +34,9 @@ probes:
     expect: "~/notes/memhall"
     rubric: |
       答出 ~/notes/memhall = 记住了；不知道 = 忘了；其他路径 = 记错。
+      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
+      mixed_up: confusion
       reported: correct
       forgot: omission
       made_up: fabrication

@@ -1,0 +1,148 @@
+# 用例：长期保持 · 大容量注入检索竞争（R06）
+# 一次教 16 条互不相关的个人事实，隔会话后考其中 5 条——检索面不再是
+# "库里只有一条"的送分题，记忆条目间互相竞争才是长期保持的真实压力面。
+# 主体词互不共享二元组（工牌/座位/分机/字体/硬盘…），mock 回显按 token
+# 重叠命中唯一目标；值含随机串（KY-7Q4M/BK-338）防训练污染。
+case_id: persist-008
+schema_version: "0.1"
+capability: persist
+question_type: cross_session_recall
+content_type: fact
+difficulty: 3
+tags: [bulk-teach, seed]
+
+meta:
+  author: A
+  created: 2026-10-04
+  source: seed
+  generator: null
+  notes: "16 条注入 × 5 问；与 recall-008 同池不同问（合计覆盖 10/16 槽位），跨会话/即时对照"
+
+phases:
+  - name: inject
+    steps:
+      - user: "我的工牌编号是 KY-7Q4M"
+      - user: "我的座位在 3 楼东侧 07 区"
+      - user: "我的内线电话分机是 5174"
+      - user: "我的 Git 提交用户名是 kylin-okim"
+      - user: "我的终端字体用霞鹜文楷"
+      - user: "我的浏览器主页是 https://start.kylin.local"
+      - user: "我的下载目录挂载在 /mnt/data/dl"
+      - user: "我的备份硬盘标签是 BK-338"
+      - user: "我的显示器型号是 LQ-2719B"
+      - user: "我的键盘用 87 键紧凑布局"
+      - user: "我开会常订麒麟厅 402"
+      - user: "我喝咖啡只喝燕麦拿铁"
+      - user: "我通勤坐地铁二号线"
+      - user: "我的工服尺码是 175/96A"
+      - user: "我的 VPN 网关是 10.7.3.21"
+      - user: "我常用的打印机叫白泽-2F"
+  - name: confound
+    steps:
+      - user: "顺便聊聊，最近昼夜温差挺大的。"
+      - user: "对了，楼下便利店的关东煮涨价了。"
+    end_session: true
+  - name: probe
+    steps:
+      - user: "你记的我的工牌编号是多少？"
+      - user: "你记的我的终端字体是什么？"
+      - user: "你记的我的备份硬盘标签是哪个？"
+      - user: "你记的我开会常订哪间会议室？"
+      - user: "你记的我的工服尺码是多少？"
+
+probes:
+  - id: persist-008-p1
+    kind: judge
+    after: probe
+    ask: "你记的我的工牌编号是多少？"
+    expect: "KY-7Q4M"
+    rubric: |
+      答出 KY-7Q4M = 记住了；
+      说不知道/没提过 = 忘了；答别的编号 = 记错了。
+      答出你记过的其他信息（张冠李戴，如别条事实的取值）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的工牌编号是 KY-7Q4M。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: persist-008-p2
+    kind: judge
+    after: probe
+    ask: "你记的我的终端字体是什么？"
+    expect: "霞鹜文楷"
+    rubric: |
+      答出霞鹜文楷 = 记住了；不知道 = 忘了；答别的字体 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的终端字体是霞鹜文楷。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: persist-008-p3
+    kind: judge
+    after: probe
+    ask: "你记的我的备份硬盘标签是哪个？"
+    expect: "BK-338"
+    rubric: |
+      答出 BK-338 = 记住了；不知道 = 忘了；答别的标签 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的备份硬盘标签是 BK-338。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: persist-008-p4
+    kind: judge
+    after: probe
+    ask: "你记的我开会常订哪间会议室？"
+    expect: "麒麟厅 402"
+    rubric: |
+      答出麒麟厅 402 = 记住了；不知道 = 忘了；答别的会议室 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你常订的会议室是麒麟厅 402。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot
+
+  - id: persist-008-p5
+    kind: judge
+    after: probe
+    ask: "你记的我的工服尺码是多少？"
+    expect: "175/96A"
+    rubric: |
+      答出 175/96A = 记住了；不知道 = 忘了；答别的尺码 = 记错了。
+      答出你记过的其他信息（张冠李戴）= mixed_up（记混）。
+    verdict_map:
+      mixed_up: confusion
+      reported: correct
+      forgot: omission
+      made_up: fabrication
+    anchors:
+      - reply: "你的工服尺码是 175/96A。"
+        expect_verdict: reported
+      - reply: "这个我不记得了。"
+        expect_verdict: forgot

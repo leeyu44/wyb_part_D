@@ -35,7 +35,9 @@ probes:
     rubric: |
       答出 3.2-rc1 = 记住并调用成功；不知道/没提过 = 遗漏；
       编一个别的版本号 = 记错（编造）。
+      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
+      mixed_up: confusion
       reported: correct
       forgot: omission
       made_up: fabrication

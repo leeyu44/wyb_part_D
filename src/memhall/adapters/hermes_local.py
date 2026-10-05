@@ -19,10 +19,10 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from memhall.adapters.base import AdapterError, AgentAdapter, AgentUnavailable, NO_WINDOW
+from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter, AgentUnavailable
 from memhall.adapters.hermes import _strip_tui
 from memhall.schema.evidence import ActionDump, MemoryEntry, MemorySnapshot, Reply
 
@@ -58,16 +58,20 @@ class LocalHermesAdapter(AgentAdapter):
 
     def _resolve_exe(self) -> str:
         if self._exe is None:
-            from memhall.discovery import _which
-            exe = _which("hermes")
+            from memhall.discovery import ADAPTER_CLI, find_cli
+            exe = find_cli(*ADAPTER_CLI["hermes"])
             if not exe:
-                raise AgentUnavailable("PATH 里找不到 hermes（安装后重开终端）")
+                raise AgentUnavailable("PATH 与 ~/.hermes/bin 均找不到 hermes（安装后重开终端）")
             self._exe = exe
         return self._exe
 
     def _sandbox_env(self) -> dict:
-        base = os.environ.get("AGENT_LLM_BASE_URL", "").rstrip("/")
-        key = os.environ.get("AGENT_LLM_KEY", "")
+        # 统一模型模式（GATEWAY_URL）优先：走本地网关，真凭据只在网关进程
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("hermes-local")
+        base = (gw["base_url"] if gw
+                else os.environ.get("AGENT_LLM_BASE_URL", "")).rstrip("/")
+        key = gw["key"] if gw else os.environ.get("AGENT_LLM_KEY", "")
         if not (base and key):
             raise AgentUnavailable("缺 AGENT_LLM_BASE_URL / AGENT_LLM_KEY（检查 .env）")
         env = os.environ.copy()
@@ -86,8 +90,11 @@ class LocalHermesAdapter(AgentAdapter):
 
     def send(self, session_id: str, message: str) -> Reply:
         _send_throttle()
-        model = os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus")
-        sent = datetime.now(timezone.utc)
+        from memhall.gateway import gateway_settings
+        gw = gateway_settings("hermes-local")
+        model = (gw["model"] if gw
+                 else os.environ.get("AGENT_LLM_MODEL", "qwen3.7-plus"))
+        sent = datetime.now(UTC)
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -104,15 +111,25 @@ class LocalHermesAdapter(AgentAdapter):
             raise AgentUnavailable(
                 f"hermes 无有效回复(rc={r.returncode}): "
                 f"{(r.stdout or '')[:150]} | {(r.stderr or '')[:150]}")
-        if "API failed after" in text or "Final error" in text:
+        if ("API failed after" in text or "Final error" in text
+                or "server error" in text.lower()):
             raise AgentUnavailable(f"hermes 后端不可用: {text[:200]}")
         return Reply(session_id=session_id, text=text, sent_at=sent,
-                     reply_at=datetime.now(timezone.utc),
+                     reply_at=datetime.now(UTC),
                      latency_ms=int((time.time() - t0) * 1000),
                      token_usage=None)
 
     def end_session(self, session_id: str) -> None:
         pass  # oneshot 每次独立进程，会话隔离天然成立
+
+    def version_info(self) -> str | None:
+        try:
+            exe = self._resolve_exe()
+        except Exception:  # noqa: BLE001 未装/未探测到 = 无版本元数据
+            return None
+        from memhall.adapters.base import cli_version
+        return cli_version([exe, "--version"])
+
 
     def dump_memory(self) -> MemorySnapshot:
         entries: list[MemoryEntry] = []
@@ -127,7 +144,7 @@ class LocalHermesAdapter(AgentAdapter):
                         entry_id=f"m-{len(entries):04d}", content=s,
                         created_at=None, source_turn=name))
         return MemorySnapshot(format="files",
-                              dumped_at=datetime.now(timezone.utc),
+                              dumped_at=datetime.now(UTC),
                               entries=entries, raw=None)
 
     def dump_actions(self) -> ActionDump:

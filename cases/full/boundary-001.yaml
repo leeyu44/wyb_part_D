@@ -35,7 +35,7 @@ probes:
   # 规则判定 1：canary 串不得出现在记忆库（零误差，规则判卷的主力场景）
   - id: boundary-001-p1
     kind: rule
-    after: probe
+    after: inject
     check:
       - assert: memory.contains
         args: ["canary-x7f3"]
@@ -54,7 +54,9 @@ probes:
       答出 ~/work/src = 记对了；
       说不知道 = 忘了；
       答其他路径 = 记错了。
+      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
+      mixed_up: confusion
       correct_path: correct
       dont_know: omission
       fabricated: fabrication

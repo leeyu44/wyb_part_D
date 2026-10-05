@@ -1,0 +1,289 @@
+"""统一模型网关：所有被测智能体的 LLM 流量必经的本地代理（design.md 统一模型对照⚠️ 落地）。
+
+调研定案（2026-10-02）：cc-switch 是桌面配置改写器、非可嵌入依赖（其社区分支的
+"代理模式"验证了本架构）；LiteLLM 功能全但依赖重、离线 deb 打包负担大。自研薄层，
+fastapi/httpx 已是项目依赖，零新增。
+
+三条保证机制：
+- **model 强制改写**：请求体 model 一律换成 GATEWAY_MODEL——智能体侧配置漂移无效；
+- **凭据单点**：真上游 key 只在网关进程环境（GATEWAY_UPSTREAM_KEY），智能体只拿
+  各自 dummy key（memhall-<agent>）——入站 Bearer 兼作智能体身份标记（记账归因用，
+  不满足前缀的 Bearer 记 unknown，且绝不把入站凭据写进日志/转发给上游）；
+- **记账**：每请求一行 JSONL（agent/model/tokens/耗时/状态码），GET /usage 出聚合。
+
+协议面：OpenAI Chat Completions（含流式 SSE 中继，注入 include_usage 抓用量）。
+anthropic 面（claude-local）v1 不做——该适配器走 anthropic 端点直连（如 bigmodel），
+不进统一对照车道，配置了 GATEWAY_URL 会显式报错而非静默绕过。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+import os
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+
+log = logging.getLogger(__name__)
+
+DEFAULT_PORT = 8311
+
+
+def default_log_path() -> Path:
+    return Path.home() / ".memhall" / "gateway-usage.jsonl"
+
+
+def _agent_tag(bearer: str) -> str:
+    """入站 dummy Bearer → 智能体身份；其余一律 unknown（防真凭据落日志）。"""
+    return bearer if bearer.startswith("memhall-") else "unknown"
+
+
+def create_gateway_app(upstream: str, api_key: str, model: str,
+                       log_path: Path | None = None,
+                       client: httpx.AsyncClient | None = None,
+                       client_factory=None) -> FastAPI:
+    """网关 FastAPI 应用（cli `memhall gateway` 挂 uvicorn；测试注入替身）。
+
+    client：完整客户端替身（MockTransport 直挂）；
+    client_factory：重建路径的替身工厂（TLS 断流重建客户端的回归测试用）。"""
+
+    def _new_client() -> httpx.AsyncClient:
+        if client_factory is not None:
+            return client_factory()
+        return httpx.AsyncClient(
+            base_url=upstream.rstrip("/"),
+            timeout=httpx.Timeout(connect=15, read=300, write=30, pool=15))
+
+    log_path = log_path or default_log_path()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        if own_client and client is not None:
+            await client.aclose()
+
+    app = FastAPI(title="MemHall Gateway", docs_url=None, redoc_url=None,
+                  openapi_url=None, lifespan=lifespan)
+    own_client = client is None
+    if client is None:
+        client = _new_client()
+    state: dict = {"n_req": 0}
+
+    def _record(tag: str, asked: str, usage: dict | None, ms: float, status: int) -> None:
+        rec = {"ts": datetime.now(UTC).isoformat(),
+               "agent": tag, "model": model, "asked_model": asked,
+               "status": status, "ms": round(ms)}
+        if usage:
+            rec.update({k: usage.get(k) for k in
+                        ("prompt_tokens", "completion_tokens", "total_tokens")})
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError as e:  # 记账失败不打崩转发
+            log.warning("网关记账写盘失败: %s", e)
+
+    # 返回类型注解会让 FastAPI 尝试生成 response_model（Response 联合类型不支持）
+    async def _proxy_inner(request: Request):
+        state["n_req"] += 1
+        raw = await request.body()
+        bearer = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        tag = _agent_tag(bearer)
+        if tag == "unknown":
+            # 某些智能体（hermes 部分内部调用）用 x-api-key 带 key——同样识别
+            tag = _agent_tag(request.headers.get("x-api-key", ""))
+        try:
+            payload = json.loads(raw) if raw else {}
+        except ValueError:  # JSONDecodeError / UnicodeDecodeError（非 UTF-8 体）
+            return JSONResponse({"error": {"message": "请求体不是合法 UTF-8 JSON",
+                                           "type": "gateway_bad_request"}}, status_code=400)
+        asked = str(payload.get("model", ""))
+        payload["model"] = model  # 核心保证：模型一律网关说了算
+        stream = bool(payload.get("stream"))
+        if stream:
+            # 注入 include_usage，让上游在流尾补 usage 块（记账数据源）
+            payload.setdefault("stream_options", {}).setdefault("include_usage", True)
+        t0 = time.monotonic()
+        # 上游腿 TLS 断流（bad record mac 坏窗口）重试：aclose 是永久关闭，
+        # 必须弃旧建新客户端（复用已关客户端=整站 500，全量跑实逮）；
+        # 重试只覆盖建连/发请求阶段，流中途断不重发
+        nonlocal client
+        up = None
+        last_err: Exception | None = None
+        for attempt in range(3):
+            c = client
+            assert c is not None  # init 已兜底
+            try:
+                up_req = c.build_request(
+                    "POST", "/chat/completions", json=payload,
+                    headers={"Authorization": f"Bearer {api_key}",  # 真凭据只在这出现
+                             "Content-Type": "application/json"})
+                up = await c.send(up_req, stream=stream)
+                break
+            except Exception as e:  # noqa: BLE001 TLS 断流常以裸 ssl.SSLError 冒出（实测）
+                last_err = e
+                log.warning("网关上游断流（第 %d 次）: %s", attempt + 1, e)
+                if client is not None:
+                    await client.aclose()
+                if own_client:
+                    client = _new_client()
+                await asyncio.sleep(0.5 * (attempt + 1))
+        if up is None:
+            _record(tag, asked, None, (time.monotonic() - t0) * 1000, 599)
+            return JSONResponse({"error": {"message": f"上游不可达: {last_err}",
+                                           "type": "gateway_upstream_unreachable"}},
+                                status_code=502)
+        if up.status_code >= 400:
+            text = (await up.aread()).decode("utf-8", "replace")[:500]
+            await up.aclose()
+            _record(tag, asked, None, (time.monotonic() - t0) * 1000, up.status_code)
+            log.warning("网关转发失败 %d: %s", up.status_code, text[:200])
+            return JSONResponse({"error": {
+                "message": f"上游 {up.status_code}: {text}",
+                "type": "gateway_upstream_error"}}, status_code=502)
+
+        if not stream:
+            data = up.json()
+            await up.aclose()
+            _record(tag, asked, data.get("usage"), (time.monotonic() - t0) * 1000, 200)
+            return JSONResponse(data)
+
+        async def relay():
+            buf = bytearray()
+            try:
+                async for chunk in up.aiter_raw():
+                    buf.extend(chunk)
+                    yield chunk
+            finally:
+                usage = _usage_from_sse(bytes(buf))
+                _record(tag, asked, usage, (time.monotonic() - t0) * 1000, 200)
+                with contextlib.suppress(Exception):
+                    await up.aclose()
+
+        return StreamingResponse(relay(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache",
+                                          "X-Accel-Buffering": "no"})
+
+    async def _proxy(request: Request):
+        try:
+            return await _proxy_inner(request)
+        except Exception as e:  # 兜底：意外异常不当 500 黑盒
+            log.exception("网关内部错误")
+            _record("unknown", "", None, 0.0, 500)  # 砖死也要在账上可见
+            return JSONResponse({"error": {"message": f"gateway internal: {e}",
+                                           "type": "gateway_internal_error"}},
+                                status_code=500)
+
+    for path in ("/v1/chat/completions", "/chat/completions"):
+        app.post(path)(_proxy)
+
+    async def _models() -> JSONResponse:
+        return JSONResponse({"object": "list",
+                             "data": [{"id": model, "object": "model",
+                                       "owned_by": "memhall-gateway"}]})
+
+    for path in ("/v1/models", "/models"):
+        app.get(path)(_models)
+
+    @app.get("/usage")
+    async def _usage() -> JSONResponse:
+        return JSONResponse(aggregate_usage(log_path))
+
+    @app.post("/v1/messages")
+    async def _anthropic_unsupported() -> JSONResponse:
+        return JSONResponse({"error": {
+            "message": "anthropic 协议面 v1 未实现：claude-local 走 anthropic 端点"
+                       "直连，不进统一对照车道（见 docs/design.md 统一模型对照）",
+            "type": "gateway_protocol_unsupported"}}, status_code=501)
+
+    @app.get("/health")
+    async def _health() -> JSONResponse:
+        return JSONResponse({"ok": True, "model": model, "upstream": upstream,
+                             "n_req": state["n_req"]})
+
+    return app
+
+
+def _usage_from_sse(buf: bytes) -> dict | None:
+    """从 SSE 流原文里抓最后一个 usage 块（include_usage 注入的产出）。"""
+    usage = None
+    for part in buf.split(b"data: "):
+        part = part.strip()
+        if not part or part == b"[DONE]":
+            continue
+        try:
+            chunk = json.loads(part)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(chunk, dict) and chunk.get("usage"):
+            usage = chunk["usage"]
+    return usage
+
+
+def aggregate_usage(log_path: Path) -> dict:
+    """usage.jsonl → 按智能体聚合（n/tokens/错误数），供 /usage 与 --report。"""
+    agg: dict[str, dict] = {}
+    if not log_path.is_file():
+        return {"agents": agg, "log_path": str(log_path)}
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        a = agg.setdefault(rec.get("agent", "unknown"),
+                           {"n": 0, "errors": 0, "prompt_tokens": 0,
+                            "completion_tokens": 0, "total_tokens": 0})
+        a["n"] += 1
+        if rec.get("status", 200) >= 400:
+            a["errors"] += 1
+        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            a[k] += int(rec.get(k) or 0)
+    return {"agents": agg, "log_path": str(log_path)}
+
+
+# ---------- 客户端侧：适配器读统一配置 ----------
+
+def gateway_settings(agent: str, vm_lane: bool = False) -> dict | None:
+    """GATEWAY_URL 已设 → 统一模型模式：返回适配器应使用的 {base_url, key, model}。
+
+    key 是 dummy（memhall-<agent>），网关按它识别智能体身份做记账归因；
+    真实上游凭据只存在于网关进程环境，适配器进程里摸不到。
+    vm_lane=True（VM 内适配器）：优先 GATEWAY_VM_URL（宿主网关的 VM 可达地址，
+    如 http://192.168.61.1:8311/v1），回落 GATEWAY_URL。"""
+    url = (os.environ.get("GATEWAY_VM_URL", "") if vm_lane else "").strip()
+    if not url:
+        url = os.environ.get("GATEWAY_URL", "").strip()
+    if not url:
+        return None
+    return {
+        "base_url": url.rstrip("/"),
+        "key": os.environ.get("GATEWAY_AGENT_KEY", f"memhall-{agent}"),
+        "model": os.environ.get("GATEWAY_MODEL", "unified-model"),
+    }
+
+
+def model_backend() -> dict:
+    """manifest 复现元数据：本轮评测各适配器实际挂在哪个模型上。
+
+    统一模式记网关（网关改写保证 manifest 与流量一致）；直连模式记录
+    AGENT_LLM_*/CLAUDE_LLM_* 两条已知车道，供 compare 侧一致性对账。"""
+    gw = os.environ.get("GATEWAY_URL", "").strip()
+    if gw:
+        return {"mode": "gateway", "url": gw,
+                "model": os.environ.get("GATEWAY_MODEL", "")}
+    lanes = {}
+    for lane, prefix in (("openai", "AGENT_LLM"), ("anthropic", "CLAUDE_LLM")):
+        url = os.environ.get(f"{prefix}_BASE_URL", "").strip()
+        if url:
+            lanes[lane] = {"url": url,
+                           "model": os.environ.get(f"{prefix}_MODEL", "")}
+    return {"mode": "direct", "lanes": lanes} if lanes else {"mode": "unknown"}

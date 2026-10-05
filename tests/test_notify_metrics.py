@@ -15,7 +15,6 @@ def test_notify_noop_when_headless(monkeypatch):
 
 
 def test_notify_invokes_notify_send_when_desktop(monkeypatch):
-    import subprocess
 
     calls: list = []
     monkeypatch.setattr("memhall.notify.shutil.which",
@@ -33,8 +32,9 @@ def test_notify_invokes_notify_send_when_desktop(monkeypatch):
 
 
 def _case(cid: str, cap: Capability) -> MemoryCase:
-    import yaml
     from pathlib import Path
+
+    import yaml
     raw = yaml.safe_load((Path(__file__).resolve().parents[1]
                           / "cases/full/boundary-001.yaml").read_text(encoding="utf-8"))
     raw["case_id"] = cid

@@ -29,3 +29,8 @@ evidence_store/
 # OS
 .DS_Store
 Thumbs.db
+cases/heldout/
+
+# 工具缓存
+.pytest_cache/
+tmp_dist_test/

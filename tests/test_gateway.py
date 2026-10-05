@@ -1,0 +1,394 @@
+"""统一模型网关（design.md 统一模型对照⚠️ 的落地）：
+
+- model 强制改写 + 凭据单点（真 key 只在转发头出现，dummy Bearer 兼作身份标记）
+- 记账 JSONL（含流式 SSE 中继的 usage 抓取）
+- 适配器统一模式接入（hermes-local/opencode/qwen-local/claude-local 拒绝）
+- kylinbot VM config.toml 改指网关
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+import httpx
+import pytest
+
+from memhall.adapters.base import AgentUnavailable
+from memhall.gateway import aggregate_usage, create_gateway_app, gateway_settings, model_backend
+
+UPSTREAM = "https://upstream.example/v1"
+REAL_KEY = "sk-real-secret"
+
+
+def _mk_app(tmp_path: Path, handler) -> httpx.AsyncClient:
+    """网关 app + 直挂的测试客户端（upstream 用 MockTransport 替身）。"""
+    upstream_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url=UPSTREAM,
+    )
+    app = create_gateway_app(UPSTREAM, REAL_KEY, "unified-m",
+                             tmp_path / "usage.jsonl", client=upstream_client)
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                             base_url="http://gw")
+
+
+def test_gateway_rewrites_model_and_auth(tmp_path):
+    seen: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={
+            "id": "x", "model": "unified-m",
+            "choices": [{"message": {"content": "好的"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        })
+
+    async def go():
+        async with _mk_app(tmp_path, upstream) as c:
+            r = await c.post("/v1/chat/completions",
+                             json={"model": "agent-picked-model", "messages": []},
+                             headers={"Authorization": "Bearer memhall-hermes-local"})
+            return r.status_code, r.json()
+
+    status, body = asyncio.run(go())
+    assert status == 200 and body["choices"][0]["message"]["content"] == "好的"
+    up = json.loads(seen[0].read())
+    assert up["model"] == "unified-m"          # 核心保证：模型网关说了算
+    assert seen[0].headers["Authorization"] == f"Bearer {REAL_KEY}"
+    assert "memhall-hermes-local" not in str(seen[0].headers)  # dummy 不外泄
+    lines = (tmp_path / "usage.jsonl").read_text(encoding="utf-8").splitlines()
+    rec = json.loads(lines[0])
+    assert rec["agent"] == "memhall-hermes-local" and rec["total_tokens"] == 15
+    assert rec["asked_model"] == "agent-picked-model" and rec["model"] == "unified-m"
+
+
+def test_gateway_stream_relay_and_usage(tmp_path):
+    seen: list[httpx.Request] = []
+    sse = ('data: {"choices":[{"delta":{"content":"你"}}]}\n\n'
+           'data: {"choices":[{"delta":{"content":"好"}}]}\n\n'
+           'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,'
+           '"total_tokens":10}}\n\n'
+           "data: [DONE]\n\n")
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+
+        async def gen():
+            yield sse.encode("utf-8")
+
+        # content 用异步生成器：保持响应为流态（bytes 直构会标记已消费，aiter 即炸）
+        return httpx.Response(200, content=gen(),
+                              headers={"Content-Type": "text/event-stream"})
+
+    async def go():
+        async with _mk_app(tmp_path, upstream) as c, c.stream("POST", "/chat/completions",
+                            json={"model": "m", "stream": True, "messages": []},
+                            headers={"Authorization": "Bearer memhall-kylinbot"}) as r:
+            chunks = [chunk async for chunk in r.aiter_bytes()]
+            return r.status_code, r.headers.get("content-type"), b"".join(chunks)
+
+    status, ctype, body = asyncio.run(go())
+    assert status == 200 and "text/event-stream" in ctype
+    assert body.decode("utf-8") == sse  # 字节级透传
+    up = json.loads(seen[0].read())
+    assert up["stream_options"]["include_usage"] is True  # 注入抓 usage
+    rec = json.loads((tmp_path / "usage.jsonl")
+                     .read_text(encoding="utf-8").splitlines()[0])
+    assert rec["agent"] == "memhall-kylinbot" and rec["total_tokens"] == 10
+
+
+def test_gateway_agent_tag_privacy_and_models(tmp_path):
+    """非 dummy Bearer（误配真 key）→ 记 unknown 且真 key 不落日志；/models 列统一模型。"""
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [], "usage": None})
+
+    async def go():
+        async with _mk_app(tmp_path, upstream) as c:
+            r1 = await c.post("/v1/chat/completions", json={"model": "m"},
+                              headers={"Authorization": "Bearer sk-real-looking-key"})
+            r2 = await c.get("/v1/models")
+            return r1.status_code, r2.json()
+
+    s1, models = asyncio.run(go())
+    assert s1 == 200
+    assert [m["id"] for m in models["data"]] == ["unified-m"]
+    log_text = (tmp_path / "usage.jsonl").read_text(encoding="utf-8")
+    rec = json.loads(log_text.splitlines()[0])
+    assert rec["agent"] == "unknown"
+    assert "sk-real-looking-key" not in log_text
+
+
+def test_gateway_upstream_failure_recorded(tmp_path):
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "rate limited"})
+
+    async def go():
+        async with _mk_app(tmp_path, upstream) as c:
+            r = await c.post("/v1/chat/completions", json={"model": "m"},
+                             headers={"Authorization": "Bearer memhall-opencode"})
+            return r.status_code, r.json()
+
+    status, body = asyncio.run(go())
+    assert status == 502 and "429" in body["error"]["message"]
+    rec = json.loads((tmp_path / "usage.jsonl")
+                     .read_text(encoding="utf-8").splitlines()[0])
+    assert rec["status"] == 429 and rec["agent"] == "memhall-opencode"
+    agg = aggregate_usage(tmp_path / "usage.jsonl")
+    assert agg["agents"]["memhall-opencode"]["errors"] == 1
+
+
+def test_gateway_settings_lanes(monkeypatch):
+    assert gateway_settings("hermes") is None  # 未配置 = 直连模式
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:8311/v1/")
+    monkeypatch.setenv("GATEWAY_MODEL", "qwen3.7-plus")
+    g = gateway_settings("hermes-local")
+    assert g == {"base_url": "http://127.0.0.1:8311/v1",
+                 "key": "memhall-hermes-local", "model": "qwen3.7-plus"}
+    monkeypatch.setenv("GATEWAY_VM_URL", "http://192.168.61.1:8311/v1")
+    vm = gateway_settings("hermes", vm_lane=True)
+    assert vm["base_url"] == "http://192.168.61.1:8311/v1"
+    assert gateway_settings("opencode")["base_url"] == "http://127.0.0.1:8311/v1"
+
+
+def test_model_backend_modes(monkeypatch):
+    for k in ("GATEWAY_URL", "GATEWAY_MODEL", "AGENT_LLM_BASE_URL",
+              "AGENT_LLM_MODEL", "CLAUDE_LLM_BASE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    assert model_backend() == {"mode": "unknown"}
+    monkeypatch.setenv("AGENT_LLM_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("AGENT_LLM_MODEL", "qwen3.7-plus")
+    assert model_backend() == {"mode": "direct", "lanes": {
+        "openai": {"url": "https://api.example/v1", "model": "qwen3.7-plus"}}}
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:8311/v1")
+    monkeypatch.setenv("GATEWAY_MODEL", "qwen3.7-plus")
+    assert model_backend() == {"mode": "gateway",
+                               "url": "http://127.0.0.1:8311/v1",
+                               "model": "qwen3.7-plus"}
+
+
+def test_hermes_local_gateway_mode(tmp_path, monkeypatch):
+    from memhall.adapters.hermes_local import LocalHermesAdapter
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:8311/v1")
+    monkeypatch.setenv("GATEWAY_MODEL", "qwen3.7-plus")
+    a = LocalHermesAdapter(root=tmp_path)
+    env = a._sandbox_env()
+    assert env["DEEPSEEK_BASE_URL"] == "http://127.0.0.1:8311/v1"
+    assert env["DEEPSEEK_API_KEY"] == "memhall-hermes-local"
+    assert "AGENT_LLM_KEY" not in env["DEEPSEEK_API_KEY"]  # 真网关 key 不进沙箱
+
+
+def test_opencode_gateway_mode(tmp_path, monkeypatch):
+    from memhall.adapters.opencode import OpenCodeAdapter
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:8311/v1")
+    monkeypatch.setenv("GATEWAY_MODEL", "qwen3.7-plus")
+    a = OpenCodeAdapter(root=tmp_path)
+    a.reset()
+    cfg = json.loads((a.cfg_dir / "opencode.json").read_text(encoding="utf-8"))
+    prov = cfg["provider"]["memhall-gw"]
+    assert prov["options"]["baseURL"] == "http://127.0.0.1:8311/v1"
+    assert prov["options"]["apiKey"] == "memhall-opencode"
+    assert a.model == "qwen3.7-plus"
+
+
+def test_qwen_local_gateway_mode(tmp_path, monkeypatch):
+    from memhall.adapters.qwen_local import LocalQwenAdapter
+    fake_home = tmp_path / "qwen-src"
+    (fake_home / ".qwen").mkdir(parents=True)
+    (fake_home / ".qwen" / "settings.json").write_text(json.dumps({
+        "modelProviders": {"openai": [{"id": "qwen3.6-plus",
+                                       "baseUrl": "https://api.mazhuoran.cloud/v1",
+                                       "envKey": "NEWAPI_KEY"}]},
+        "env": {"NEWAPI_KEY": "sk-user-real"},
+        "model": {"name": "qwen3.6-plus"},
+    }), encoding="utf-8")
+    monkeypatch.setattr("memhall.adapters.qwen_local.Path.home",
+                        lambda: fake_home)
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:8311/v1")
+    monkeypatch.setenv("GATEWAY_MODEL", "qwen3.7-plus")
+    a = LocalQwenAdapter(root=tmp_path / "sb")
+    a.reset()
+    settings = json.loads((a.qwen_home / "settings.json").read_text(encoding="utf-8"))
+    prov = settings["modelProviders"]["openai"][0]
+    assert prov["baseUrl"] == "http://127.0.0.1:8311/v1"
+    assert settings["model"]["name"] == "qwen3.7-plus"
+    assert a._sandbox_env()["NEWAPI_KEY"] == "memhall-qwen-local"
+
+
+def test_claude_local_rejects_gateway(tmp_path, monkeypatch):
+    from memhall.adapters.claude_local import LocalClaudeAdapter
+    monkeypatch.setenv("GATEWAY_URL", "http://127.0.0.1:8311/v1")
+    a = LocalClaudeAdapter(root=tmp_path)
+    with pytest.raises(AgentUnavailable, match="anthropic"):
+        a._sandbox_env()
+
+
+def test_compare_model_parity(tmp_path):
+    """统一模型对账：两次运行 model_backend 不一致 → compare 报告顶部告警。"""
+    from memhall.report.compare import compare_runs
+
+    def mk(d, adapter, model):
+        d.mkdir(parents=True)
+        (d / "manifest.json").write_text(json.dumps({
+            "adapter": adapter, "run_id": "20261002-000000-" + adapter,
+            "model_backend": {"mode": "gateway", "url": "http://gw/v1",
+                              "model": model}}), encoding="utf-8")
+        (d / "metrics.json").write_text(json.dumps({
+            "overall_score": 1.0, "capability_scores": {"persist": 1.0}}),
+            encoding="utf-8")
+        (d / "verdicts.jsonl").write_text("", encoding="utf-8")
+
+    a = tmp_path / "a"
+    mk(a, "hermes", "qwen3.7-plus")
+    b = tmp_path / "b"
+    mk(b, "kylinbot", "glm-5.3")
+    out = compare_runs(a, b, tmp_path / "cmp")
+    assert out["model_parity"]["same"] is False
+    md = (tmp_path / "cmp" / "compare.md").read_text(encoding="utf-8")
+    assert "模型口径不一致" in md and "qwen3.7-plus" in md and "glm-5.3" in md
+
+    c = tmp_path / "c"
+    mk(c, "hermes2", "qwen3.7-plus")
+    out2 = compare_runs(a, c, tmp_path / "cmp2")
+    assert out2["model_parity"]["same"] is True
+    md2 = (tmp_path / "cmp2" / "compare.md").read_text(encoding="utf-8")
+    assert "模型口径不一致" not in md2
+
+
+def test_gateway_tls_error_rebuilds_client(tmp_path, monkeypatch):
+    """上游 TLS 断流 → aclose 旧客户端后必须重建（复用已关客户端=整站 500，
+    全量跑实逮：一次抖动砖死网关，kylinbot 两轮全灭）。"""
+    calls = {"n": 0}
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("TLS bad record mac")
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})
+
+    mock = httpx.MockTransport(upstream)
+
+    app = create_gateway_app(
+        UPSTREAM, REAL_KEY, "unified-m", tmp_path / "u.jsonl",
+        client_factory=lambda: httpx.AsyncClient(base_url=UPSTREAM, transport=mock))
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="http://gw") as c:
+            r = await c.post("/v1/chat/completions", json={"model": "x"},
+                             headers={"Authorization": "Bearer memhall-hermes"})
+            return r.status_code, r.json()
+
+    status, body = asyncio.run(go())
+    assert status == 200 and body["choices"][0]["message"]["content"] == "ok"
+    assert calls["n"] == 2  # 第一次断流，重试（新客户端）成功
+
+
+class _BrokenAdapter:
+    """send 全挂的假适配器（AgentUnavailable）。"""
+
+    name = "broken"
+
+    def reset(self):
+        pass
+
+    def send(self, session_id, message):
+        from memhall.adapters.base import AgentUnavailable
+        raise AgentUnavailable("后端不可用")
+
+    def end_session(self, sid):
+        pass
+
+    def dump_memory(self):
+        from datetime import UTC, datetime
+
+        from memhall.schema.evidence import MemorySnapshot
+        return MemorySnapshot(format="files", dumped_at=datetime.now(UTC),
+                              entries=[], raw=None)
+
+    def dump_actions(self):
+        from memhall.schema.evidence import ActionDump
+        return ActionDump(actions=[], coverage="unknown")
+
+    def verify_reset(self):
+        pass
+
+    def fs_snapshot(self):
+        return []
+
+    def clock_shift(self, days):
+        pass
+
+    def clock_restore(self):
+        pass
+
+
+def test_adapter_failure_marks_invalid_run(tmp_path):
+    """适配器中途挂 → 部分对话落盘且判定 INVALID_RUN，不静默降级成 omission。"""
+    from memhall.runner.orchestrator import run_suite
+    from memhall.schema.models_case import MemoryCase, Phase, Step
+    case = MemoryCase(
+        case_id="broken-001", schema_version="0.1",
+        capability="persist", question_type="session_recall",
+        content_type="path", difficulty=1,
+        meta={"author": "test", "created": "2026-10-02", "source": "seed"},
+        phases=[Phase(name="inject", steps=[Step(user="我的笔记在 ~/notes/x")])],
+        probes=[{"id": "broken-001-p1", "kind": "judge", "after": "probe",
+                 "ask": "你记的我的笔记在哪？", "expect": "~/notes/x",
+                 "rubric": "答出 = 记住了",
+                 "verdict_map": {"reported": "correct", "forgot": "omission"},
+                 "anchors": []}])
+    from memhall.scoring.engine import evaluate_case
+    run_id, stores = run_suite(_BrokenAdapter(), [case], tmp_path, "broken")
+    verdicts = evaluate_case(case, stores[0], run_id)
+    assert verdicts[0].verdict.value == "invalid_run"
+    ev = (tmp_path / run_id / "cases" / "broken-001" / "evidence.jsonl") \
+        .read_text(encoding="utf-8")
+    assert "[RUNTIME_ERROR]" in ev  # 标记进证据，判定可下钻
+
+
+class _FakeChannel:
+    """kylinbot 测试通道：按序返回脚本化 (rc, out, err)。"""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls: list[str] = []
+
+    def run(self, cmd, timeout=300, stdin_data=None):
+        self.calls.append(cmd)
+        return self.script.pop(0)
+
+    def sudo(self, cmd, timeout=120):
+        self.calls.append(cmd)
+        return self.script.pop(0)
+
+
+def test_kylinbot_config_toml_rewrite(tmp_path, monkeypatch):
+    from memhall.adapters.kylinbot import KylinBotAdapter
+    monkeypatch.setenv("GATEWAY_VM_URL", "http://192.168.61.1:8311/v1")
+    monkeypatch.setenv("GATEWAY_MODEL", "qwen3.7-plus")
+    ch = _FakeChannel([
+        (0, "custom:https://api.mazhuoran.cloud/v1\n", ""),   # grep 当前 provider
+        (0, "", ""),                                          # 备份 cp
+        (0, "", ""),                                          # sed 改指
+        (0, "Cleared 5/5\n", ""),                             # memory clear
+    ])
+    KylinBotAdapter(channel=ch).reset()
+    sed = [c for c in ch.calls if "sed -i" in c]
+    assert sed, ch.calls
+    assert 'custom:http://192.168.61.1:8311/v1' in sed[0]
+    assert "memhall-kylinbot" in sed[0]
+    assert "api.mazhuoran.cloud" not in sed[0].split("&&")[1]  # 第二段只剩网关 URL
+    # 直连模式 + 残留网关配置 → 自动还原备份
+    monkeypatch.delenv("GATEWAY_VM_URL")
+    monkeypatch.delenv("GATEWAY_URL", raising=False)
+    ch2 = _FakeChannel([
+        (0, "custom:http://192.168.61.1:8311/v1\n", ""),      # grep：发现残留
+        (0, "", ""),                                          # cp 还原
+        (0, "Cleared 5/5\n", ""),
+    ])
+    KylinBotAdapter(channel=ch2).reset()
+    assert any("config.toml.bak-memhall" in c and "cp" in c for c in ch2.calls)

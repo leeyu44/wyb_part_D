@@ -13,7 +13,10 @@ import paramiko
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-HOST = "192.168.61.133"
+# 实验室内网默认（VM_H_* 工具链私有；外部使用改环境变量 VM_TOOL_HOST）
+import os as _os  # noqa: E402
+
+HOST = _os.environ.get("VM_TOOL_HOST", "192.168.61.133")
 USER = "okim"
 
 
@@ -42,7 +45,8 @@ def main() -> int:
         cli.close()
     ok = rsize == size
     dt = time.time() - t0
-    print(f"{'OK' if ok else 'SIZE-MISMATCH'}: {size//1024//1024} MB in {dt:.0f}s ({size/1024/1024/max(dt,0.1):.1f} MB/s)")
+    speed = size / 1024 / 1024 / max(dt, 0.1)
+    print(f"{'OK' if ok else 'SIZE-MISMATCH'}: {size // 1024 // 1024} MB in {dt:.0f}s ({speed:.1f} MB/s)")
     return 0 if ok else 1
 
 

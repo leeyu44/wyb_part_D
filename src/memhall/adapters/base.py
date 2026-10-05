@@ -8,6 +8,7 @@ MockAdapter 在 adapters/mock.py —— 全队第一个能跑的适配器，也�
 from __future__ import annotations
 
 import os
+import subprocess
 from abc import ABC, abstractmethod
 
 from memhall.schema.evidence import ActionDump, MemorySnapshot, Reply
@@ -38,6 +39,17 @@ class MemoryResetUnsupported(AdapterError):
 
 class MemoryNotDumpable(AdapterError):
     """记忆无法导出（纯云端记忆）-> 该 case 降级纯行为判定。"""
+
+
+def cli_version(args: list[str]) -> str | None:
+    """跑 `<exe> --version` 取第一行（版本探测尽力而为，失败返回 None）。"""
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=30,
+                             creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    lines = (out.stdout or out.stderr or "").strip().splitlines()
+    return lines[0] if lines else None
 
 
 # ---------- 基类 ----------
@@ -71,17 +83,36 @@ class AgentAdapter(ABC):
     def dump_actions(self) -> ActionDump:
         """导出 reset 以来的操作记录。来源优先级：MCP 日志 > 智能体日志 > auditd。"""
 
-    def fs_snapshot(self) -> list[str] | None:
-        """被测环境用户区文件清单（fs_diff 证据源）。None = 不支持，runner 跳过。
+    def version_info(self) -> str | None:
+        """被测智能体版本标识（进 manifest/report，可复现性元数据）。
 
-        路径统一 ~ 相对形式（如 ~/dev/src/demo）；mock 等纯内存智能体返回 None。
+        尽力而为：探测失败返回 None，不阻塞评测。"""
+        return None
+
+    def fs_snapshot(self) -> list[str] | None:
+        """被测环境用户区文件清单（fs_diff 证据源）。None = 不支持，runner 跳过，
+        fs 断言探测点将判运行无效（规则层不查判卷机本地盘）。
+
+        路径统一 ~ 相对形式（如 ~/dev/src/demo）。
         """
         return None
 
     def clock_shift(self, days: int) -> None:
         """拨动被测环境系统时钟 N 天（模拟隔天/隔周，temporal 题前提）。默认 no-op。"""
-        return None
+        return
 
     def clock_restore(self) -> None:
         """恢复系统时钟（case 结束由 runner 调用）。默认 no-op。"""
-        return None
+        return
+
+    def verify_reset(self) -> None:
+        """reset 彻底性防线（每个 case 开跑前由 runner 调用，fail fast）。
+
+        默认校验 dump_memory 为空；适配器有 dump 覆盖不到的记忆源
+        （会话转录、其他存储文件）时应覆写加强。reset 不彻底 = 跨用例
+        污染——同问异答的题库里上一个 case 的答案是定向毒药，宁可中止。"""
+        snap = self.dump_memory()
+        if snap.entries:
+            raise AdapterError(
+                f"reset 后记忆非空（{len(snap.entries)} 条残留）："
+                "跨用例污染风险，本 case 中止（docs/review-tasks.md R02）")

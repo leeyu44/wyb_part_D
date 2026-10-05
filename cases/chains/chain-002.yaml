@@ -38,7 +38,9 @@ probes:
       答出 ~/scripts/kylin-deploy.sh = 复用成功；不知道/没记过 = 遗漏；其他路径 = 编造。
       豁免：答磁盘上真实存在但用户从未告知的部署脚本路径（自行探索发现）判 dont_know。
       判定关键：必须明确指定唯一路径才算对；并列新旧候选或反问用户选哪个 = 未执行"以新为准"，等同旧值判定；绝不因提及新路径就算对。
+      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
+      mixed_up: confusion
       reported: correct
       dont_know: omission
       made_up: fabrication

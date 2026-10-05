@@ -15,8 +15,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from memhall.scoring.judge import ScriptedJudge, _REFUSAL_KEYS
 from memhall.schema.models_case import JudgeProbe
+from memhall.scoring.judge import _REFUSAL_KEYS, ScriptedJudge
 
 PASS_RATE = 0.95  # design.md §6.1：诱饵拒绝率 ≥95%
 

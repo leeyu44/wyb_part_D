@@ -1,7 +1,7 @@
 """用例进库校验（B 的每日工具，对应契约 02 §7 出题校验）。
 
 用法：
-    python scripts/lint_cases.py            # 校验 cases/full 全库 + 输出覆盖矩阵
+    python scripts/lint_cases.py            # 全库门禁（full+gen+chains）+ 输出覆盖矩阵
     python scripts/lint_cases.py --case cases/full/persist-001.yaml   # 单用例快速校验
 
 检查项（契约 02 §7）：
@@ -44,10 +44,14 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
         errors.append(f"{path.name}: case_id '{case.case_id}' 不符合 <能力族>-<三位序号> 格式")
 
     # 防污染：boundary / sensitive 必须有 canary
+    # （生成题豁免：source=generated 的防污染来自 seed 控制的随机 token，
+    #  与 canary 串机制等价；且存档稳定性约束生成器不可改——见 test_gen_knobs）
     texts = [s.user or s.task or "" for p in case.phases for s in p.steps]
     full_text = "\n".join(texts)
     if case.capability.value == "boundary" or case.content_type.value == "sensitive":
-        if not CANARY_RE.search(full_text):
+        if case.meta.source == "generated":
+            stats["canary_cases"] += 1
+        elif not CANARY_RE.search(full_text):
             errors.append(f"{path.name}: 能力={case.capability.value} 或 内容={case.content_type.value} "
                           f"必须包含 canary-[a-z0-9]{{4}} 串")
         else:
@@ -60,16 +64,21 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
     # 探测点检查
     for probe in case.probes:
         if probe.kind == "judge":
+            for k, v in probe.verdict_map.items():
+                stats["vm_keys"][v].add(k)
+        if probe.kind == "judge":
             if not probe.rubric.strip():
                 errors.append(f"{path.name}: judge 探测 {probe.id} rubric 为空（不可判定）")
             for v in probe.verdict_map.values():
                 if v not in FIVE_STATES:
                     errors.append(f"{path.name}: judge 探测 {probe.id} 映射到非法判定值 '{v}'")
             if len(probe.anchors) < 2:
-                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例 <2（契约要求每题型至少 2 条）")
+                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例 <2"
+                              "（契约要求每题型至少 2 条）")
             anchor_keys = {a.expect_verdict for a in probe.anchors}
             if not anchor_keys <= set(probe.verdict_map):
-                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例的 expect_verdict 不在 verdict_map 中")
+                errors.append(f"{path.name}: judge 探测 {probe.id} 锚定例的 "
+                              "expect_verdict 不在 verdict_map 中")
             # ask 与 probe 段话术一致
             if probe.ask not in probe_texts:
                 errors.append(f"{path.name}: judge 探测 {probe.id} 的 ask 与 probe 段 user 话术不一致")
@@ -79,7 +88,8 @@ def check_case(path: Path, errors: list[str], stats: dict, warnings: list[str] |
             if case.capability.value == "dynamic_update" and case.question_type.value == "info_update":
                 old_keys = [k for k in probe.verdict_map if probe.verdict_map[k] == "wrong_reuse"]
                 if not old_keys:
-                    warnings.append(f"{path.name}: update 族 info_update 探测 {probe.id} 缺少旧值→wrong_reuse 映射"
+                    warnings.append(f"{path.name}: update 族 info_update 探测 {probe.id} "
+                                    "缺少旧值→wrong_reuse 映射"
                                     f"（推荐口径，见 C 实测 §8；团队审计版可用 confusion，需 C/A 统一）")
         else:  # rule
             if not probe.check:
@@ -110,8 +120,12 @@ def main(argv: list[str]) -> int:
         targets = sorted(Path(argv[argv.index("--dir") + 1]).glob("*.yaml"))
         mode = Path(argv[argv.index("--dir") + 1]).name
     else:
-        targets = sorted((REPO / "cases" / "full").glob("*.yaml"))
-        mode = "full"
+        # 全库门禁：full + gen + chains（heldout 现场生成不在库内）。
+        # 曾只查 full——chain-004 等新集合入库不过门禁，规则漂移无人拦。
+        subs = ["full", "gen", "chains"]
+        targets = sorted(p for s in subs
+                         for p in (REPO / "cases" / s).glob("*.yaml"))
+        mode = "+".join(subs)
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -119,6 +133,7 @@ def main(argv: list[str]) -> int:
         "total": 0, "canary_cases": 0, "judge_probes": 0, "rule_probes": 0,
         "by_capability": Counter(), "by_content": Counter(), "by_qtype": Counter(),
         "by_difficulty": Counter(), "matrix": defaultdict(int),
+        "vm_keys": defaultdict(set),
     }
     seen_ids: set[str] = set()
     for p in targets:
@@ -155,6 +170,14 @@ def main(argv: list[str]) -> int:
             print(f"\n  ⚠ 覆盖矩阵空格（{len(empty)} 个，--allow-gaps 模式下仅提示）: {empty}")
         else:
             errors.append(f"覆盖矩阵有空格: {empty}")
+
+    # R21 advisory：verdict_map 键名词表统计（不拦截）——同一判定值的键名写法
+    # 越多，LLM 判卷面对的词表越乱；新题用契约 02 §6 的标准词表
+    print("\n=== verdict_map 键名词表（advisory，不拦截）===")
+    for val in sorted(stats["vm_keys"]):
+        keys = sorted(stats["vm_keys"][val])
+        note = "  ← 写法偏多，建议收敛" if len(keys) > 4 else ""
+        print(f"  {val:<12} {len(keys)} 种: {'/'.join(keys)}{note}")
 
     if errors:
         print("\n=== 校验失败 ===")

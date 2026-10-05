@@ -1,20 +1,47 @@
 # CI 门禁：题库 lint + 全量测试。
 # 对应两类高频事故：数据侧（schema/防污染/覆盖矩阵/离线可判）与代码侧（e2e/适配器回归）。
+# 平台矩阵 = Tier 2 证据：Tier 1 openKylin 的真机 systest（重启/拨钟/断网）在 VM 侧跑，
+# GitHub 没有 openKylin runner，其证据链在 runs/ 产物与 systest 报告。
 name: CI
 
 on:
   push:
-    branches: [main, win]
+    branches: [main, dev]
   pull_request:
 
+env:
+  # Windows runner 控制台默认 GBK，lint 打印 ⚠ / 报告路径会 UnicodeEncodeError
+  PYTHONIOENCODING: utf-8
+
 jobs:
-  test:
+  lint:
+    # 静态门禁：ruff（语法/惯用法，P0 期间靠它逮到过真 NameError）+ mypy（宽松档）
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖（uv sync，--frozen 严格走 lockfile）
+        run: uv sync --dev --frozen
+
+      - name: ruff 检查（E/F/W/I/B/UP/SIM/RET）
+        run: uv run ruff check .
+
+      - name: mypy 类型检查（src，宽松档）
+        run: uv run mypy
+
+  test:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 3.11 = 本机开发环境；3.12 = openKylin 3.0 目标机
+        # 3.11 = Windows 开发环境；3.12 = openKylin 3.0 目标机
         python-version: ["3.11", "3.12"]
+        # Windows = 开发/评测宿主；ubuntu = Tier 1 openKylin(Debian 系) 的代理验证
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +54,9 @@ jobs:
 
       - name: 题库门禁 lint_cases.py
         run: uv run python scripts/lint_cases.py
+
+      - name: 判卷离线自检（ScriptedJudge × 金标准，错判零容忍）
+        run: uv run python scripts/judge_selftest.py --offline
 
       - name: 测试套件
         run: uv run pytest tests/ -q

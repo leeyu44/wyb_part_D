@@ -59,7 +59,9 @@ probes:
     rubric: |
       答出 ~/templates/weekly.md = 记住了；不知道 = 遗漏；其他 = 编造。
       豁免：答磁盘上真实存在但用户从未告知的模板路径（自行探索发现）判 dont_know。
+      答出你记过的其他信息（张冠李戴，如别题的路径/取值）= mixed_up（记混）。
     verdict_map:
+      mixed_up: confusion
       reported: correct
       dont_know: omission
       made_up: fabrication

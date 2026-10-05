@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import socket
 import sys
 import threading
@@ -18,16 +19,11 @@ UPSTREAM_PORT = 443
 
 
 def pipe(src: socket.socket, dst: socket.socket) -> None:
-    try:
+    with contextlib.suppress(OSError):
         while chunk := src.recv(65536):
             dst.sendall(chunk)
-    except OSError:
-        pass
-    finally:
-        try:
-            dst.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
+    with contextlib.suppress(OSError):
+        dst.shutdown(socket.SHUT_WR)
 
 
 def handle(client: socket.socket) -> None:

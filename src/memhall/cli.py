@@ -8,19 +8,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
 import yaml
 
-from memhall.adapters.mock import MockAdapter
-from memhall.runner.orchestrator import run_suite
+from memhall import __version__
+from memhall.adapters import create_adapter
+from memhall.paths import QUICK_IDS, resolve_case_dir
+from memhall.report import compute_metrics, render_radar, render_report
+from memhall.runner.orchestrator import pair_stores, run_suite
+from memhall.schema.evidence import Verdict
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.engine import evaluate_case
 from memhall.scoring.judge import OpenAICompatJudge
-from memhall.report import compute_metrics, render_radar, render_report
-from memhall.schema.evidence import Verdict
+
+log = logging.getLogger(__name__)
 
 
 def load_cases(case_dir: Path) -> list[MemoryCase]:
@@ -29,6 +34,35 @@ def load_cases(case_dir: Path) -> list[MemoryCase]:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         cases.append(MemoryCase.model_validate(raw))
     return cases
+
+
+def load_case_set(spec: str) -> list[MemoryCase]:
+    """按 'cases/full' / 'cases/quick' 规格载入用例集。
+
+    quick 是虚拟集：full 中六能力各 1 题，按 QUICK_IDS 引用过滤——
+    不再以独立目录复制 full 文件（副本曾漂移），找不到返回空列表。
+    """
+    if spec.rstrip("/") in ("quick", "cases/quick"):
+        full = resolve_case_dir("cases/full")
+        if full is None:
+            return []
+        by_id = {c.case_id: c for c in load_cases(full)}
+        return [by_id[i] for i in QUICK_IDS if i in by_id]
+    d = resolve_case_dir(spec)
+    return load_cases(d) if d is not None else []
+
+
+def load_cases_for_run(run_dir: Path) -> dict[str, MemoryCase]:
+    """run 目录自包含优先：cases/<id>/case.yaml 快照（heldout run、换机重渲染
+    都成立）；旧 run 无快照时退回当前用例库。"""
+    cases: dict[str, MemoryCase] = {}
+    for p in sorted((run_dir / "cases").rglob("case.yaml")):
+        c = MemoryCase.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
+        cases[c.case_id] = c
+    if cases:
+        return cases
+    d = resolve_case_dir("cases")
+    return {c.case_id: c for c in load_cases(d)} if d is not None else {}
 
 
 def _finish_run(run_dir: Path, run_id: str, manifest: dict,
@@ -57,60 +91,51 @@ def _finish_run(run_dir: Path, run_id: str, manifest: dict,
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    case_dir = Path(args.cases)
-    if not case_dir.exists():  # deb 装机：用例在 /usr/share/memhall/cases
-        deb_root = Path("/usr/share/memhall") / args.cases
-        if deb_root.exists():
-            case_dir = deb_root
-    cases = load_cases(case_dir)
+    cases = load_case_set(args.cases)
     if not cases:
-        print(f"未找到用例: {case_dir}", file=sys.stderr)
+        print(f"未找到用例: {args.cases}", file=sys.stderr)
         return 1
 
-    adapters: dict = {"mock": MockAdapter}
-    if args.adapter == "hermes":
-        from memhall.adapters.hermes import HermesAdapter
-        adapters["hermes"] = HermesAdapter
-    elif args.adapter == "kylinbot":
-        from memhall.adapters.kylinbot import KylinBotAdapter
-        adapters["kylinbot"] = KylinBotAdapter
-    elif args.adapter == "hermes-local":
-        from memhall.adapters.hermes_local import LocalHermesAdapter
-        adapters["hermes-local"] = LocalHermesAdapter
-    elif args.adapter == "claude-local":
-        from memhall.adapters.claude_local import LocalClaudeAdapter
-        adapters["claude-local"] = LocalClaudeAdapter
-    elif args.adapter == "qwen-local":
-        from memhall.adapters.qwen_local import LocalQwenAdapter
-        adapters["qwen-local"] = LocalQwenAdapter
-    elif args.adapter == "opencode":
-        from memhall.adapters.opencode import OpenCodeAdapter
-        adapters["opencode"] = OpenCodeAdapter
-    if args.adapter not in adapters:
-        print(f"未知适配器: {args.adapter}（可选: {', '.join(adapters)}）", file=sys.stderr)
+    try:
+        adapter = create_adapter(args.adapter)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
         return 1
-    adapter = adapters[args.adapter]()
 
     judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
     if args.judge == "dual" and judges is None:
         print("缺少 JUDGE_A_ 环境变量，回退脚本判卷", file=sys.stderr)
 
-    run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter)
+    from memhall.cost import estimate, fmt_tokens
+    est = estimate(args.adapter, len(cases), Path(args.out))
+    if est:
+        req = f"、约 {est['requests']} 次请求" if est.get("requests") else ""
+        print(f"⏳ 预计消耗 ≈ {fmt_tokens(est['total_tokens'])} tokens{req}"
+              f"（按 {est['basis_runs']} 轮历史均摊，判卷流量另计）", flush=True)
+
+    run_id, stores = run_suite(adapter, cases, Path(args.out), args.adapter,
+                               case_source=args.cases)
     run_dir = Path(args.out) / run_id
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    from memhall.gateway import model_backend
+    manifest["model_backend"] = model_backend()
 
     verdicts = []
-    for case, store in zip(cases, stores):
+    for case, store in pair_stores(cases, stores):
         verdicts.extend(evaluate_case(case, store, run_id, judges))
     metrics = _finish_run(run_dir, run_id, manifest, verdicts,
                           {c.case_id: c for c in cases}, judge_mode=args.judge)
 
     print(f"run_id: {run_id}")
-    print(f"总体正确率: {metrics['overall_score']:.1%}"
-          f"（有效 {metrics['n_valid']}/{metrics['n_probes_total']}，"
-          f"规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
+    if metrics["overall_score"] is None:
+        print("总体正确率: 未测（无有效计分探测点）")
+    else:
+        print(f"总体正确率: {metrics['overall_score']:.1%}"
+              f"（有效计分 {metrics['n_valid']}/{metrics.get('n_score_probes', '?')}"
+              f"，诊断探测 {metrics.get('n_diagnostic_probes', '?')} 不进分，"
+              f"规则判卷率 {metrics['rule_scoring_rate']:.0%}）")
     for cap, score in metrics["capability_scores"].items():
-        print(f"  {cap:<14} {score:.0%}")
+        print(f"  {cap:<14} {'未测' if score is None else f'{score:.0%}'}")
     print(f"产物: {run_dir}")
     from memhall.notify import notify_run_done
     notify_run_done(args.adapter, metrics["overall_score"],
@@ -160,11 +185,18 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_aggregate(args: argparse.Namespace) -> int:
+    from memhall.report.aggregate import aggregate_runs, format_table
+    result = aggregate_runs([_resolve_run(p) for p in args.runs], Path(args.out))
+    print(format_table(result))
+    print(f"产物: {Path(args.out) / 'aggregate.json'}")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    repo_root = Path(__file__).resolve().parents[2]
-    cases = {c.case_id: c for c in load_cases(repo_root / "cases")}
+    cases = load_cases_for_run(run_dir)
     judges = OpenAICompatJudge.pair_from_env() if args.judge == "dual" else None
     verdicts = _load_verdicts(run_dir, manifest, cases, judges)
     metrics = _finish_run(run_dir, manifest["run_id"], manifest, verdicts, cases)
@@ -196,30 +228,12 @@ def _ensure_streams() -> None:
 
 def _utf8_console() -> None:
     """Windows 控制台默认 GBK 代码页，中文输出乱码——统一改 UTF-8。"""
+    import io
     for stream in (sys.stdout, sys.stderr):
-        if stream and stream.encoding and stream.encoding.lower() not in ("utf-8", "utf8"):
-            try:
-                stream.reconfigure(encoding="utf-8", errors="replace")
-            except AttributeError:
-                pass  # 非 TextIOWrapper（重定向到文件等）时不动
-
-
-def _load_dotenv() -> None:
-    """把 .env 装进进程环境（setdefault，手工 export 优先）。
-    候选：源码=仓库根 / 打包=exe 同级 / deb 装机=~/memhall.env。
-    所有 CLI 入口统一走这里——run/doctor 直跑也依赖 AGENT_LLM_* 等键。"""
-    candidates = ([Path(sys.executable).resolve().parent / ".env"]
-                  if getattr(sys, "frozen", False)
-                  else [Path(__file__).resolve().parents[2] / ".env"])
-    candidates.append(Path.home() / "memhall.env")  # deb 装机配置页的落点
-    for env_file in candidates:
-        if not env_file.exists():
-            continue
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                os.environ.setdefault(k.strip(), v.split(" #")[0].strip())
+        # 非 TextIOWrapper（重定向到文件等）时不动
+        if (isinstance(stream, io.TextIOWrapper)
+                and stream.encoding.lower() not in ("utf-8", "utf8")):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -247,16 +261,76 @@ def cmd_systest(args: argparse.Namespace) -> int:
     return 0 if rep["n_pass"] == rep["n_total"] else 1
 
 
+def cmd_gateway(args: argparse.Namespace) -> int:
+    from pathlib import Path as _P
+
+    from memhall.gateway import DEFAULT_PORT, aggregate_usage, create_gateway_app, default_log_path
+    log_path = _P(args.log) if args.log else default_log_path()
+    if args.report:
+        agg = aggregate_usage(log_path)
+        print(f"记账文件: {log_path}")
+        if not agg["agents"]:
+            print("（暂无记录）")
+            return 0
+        print(f"{'智能体':<18} {'请求':>6} {'错误':>4} {'入tokens':>9} {'出tokens':>9} {'合计':>9}")
+        for tag, a in sorted(agg["agents"].items()):
+            print(f"{tag:<18} {a['n']:>6} {a['errors']:>4} "
+                  f"{a['prompt_tokens']:>9} {a['completion_tokens']:>9} {a['total_tokens']:>9}")
+        return 0
+    upstream = args.upstream or os.environ.get("GATEWAY_UPSTREAM_URL", "")
+    key = args.key or os.environ.get("GATEWAY_UPSTREAM_KEY", "")
+    model = args.model or os.environ.get("GATEWAY_MODEL", "")
+    if not (upstream and key and model):
+        print("缺网关配置：--upstream/--model/--key 或环境变量 "
+              "GATEWAY_UPSTREAM_URL/GATEWAY_MODEL/GATEWAY_UPSTREAM_KEY", file=sys.stderr)
+        return 1
+    port = args.port or DEFAULT_PORT
+    app = create_gateway_app(upstream, key, model, log_path)
+    print(f"统一模型网关: http://{args.host}:{port}  model={model}  "
+          f"upstream={upstream}  记账={log_path}")
+    print("被测智能体侧只需 GATEWAY_URL + GATEWAY_MODEL 两个环境变量（dummy key 自动派生）")
+    import uvicorn
+    uvicorn.run(app, host=args.host, port=port, log_level="warning")
+    return 0
+
+
 def cmd_ui(args: argparse.Namespace) -> int:
+    import socket
+    url = f"http://127.0.0.1:{args.port}/"
+    # 单实例：菜单重复点击时第二份进程绑不上端口会无声退出，浏览器却连回旧实例，
+    # 造成"重启了但没生效"的错觉——这里识别到已有实例就直接开浏览器走人。
+    probe = socket.socket()
+    probe.settimeout(0.5)
+    try:
+        probe.connect(("127.0.0.1", args.port))
+        alive = True
+    except OSError:
+        alive = False
+    finally:
+        probe.close()
+    if alive:
+        import json
+        import urllib.request
+        try:
+            with urllib.request.urlopen(f"{url}api/meta", timeout=2) as r:
+                ours = "version" in json.load(r)
+        except Exception:
+            ours = False
+        if ours:
+            if not args.no_open:
+                import webbrowser
+                webbrowser.open(url)
+            print(f"已有麟阁实例在 {url}，直接打开（不再重复启动）")
+            return 0
+        print(f"端口 {args.port} 被其他程序占用", file=sys.stderr)
+        return 1
     from memhall.ui.app import create_app
     app = create_app()
     if args.window:
         return _run_window(app)
     import threading
     import webbrowser
-    url = f"http://127.0.0.1:{args.port}/"
-    if not args.no_open:
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    threading.Timer(1.2, lambda: webbrowser.open(url)).start() if not args.no_open else None
     print(f"麟阁 Web UI: {url}（Ctrl+C 退出）")
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
@@ -266,9 +340,7 @@ def cmd_ui(args: argparse.Namespace) -> int:
 def _run_window(app) -> int:
     """原生窗口壳：优先 pywebview（真原生窗口+任务栏图标）；打包环境缺
     pythonnet/WebView2 时退 Edge 应用模式窗口（无地址栏，观感接近原生）。"""
-    import shutil
     import socket
-    import subprocess
     import threading
     import time
     import urllib.request
@@ -305,6 +377,7 @@ def _run_window(app) -> int:
 def _open_app_window(url: str) -> None:
     """Edge/Chrome 的 --app 窗口（无地址栏）；都没有则普通浏览器。"""
     import os
+    import shutil
     import webbrowser
 
     cands = [shutil.which("msedge"), shutil.which("chrome"),
@@ -321,14 +394,20 @@ def _open_app_window(url: str) -> None:
 def main() -> None:
     _ensure_streams()
     _utf8_console()
-    _load_dotenv()
+    from memhall.env import load_dotenv
+    from memhall.logs import setup_logging
     if len(sys.argv) == 1 and getattr(sys, "frozen", False):
         sys.argv = ["memhall", "ui", "--window"]  # 双击 exe = 直接开窗口
     parser = argparse.ArgumentParser(prog="memhall",
                                      description="麟阁：智能体记忆能力评测基准")
+    parser.add_argument("--version", action="version",
+                        version=f"memhall {__version__}")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-v", "--verbose", action="store_true",
+                        help="调试日志（逐 case/步骤/SSH 命令）")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_run = sub.add_parser("run", help="跑一轮评测并出报告")
+    p_run = sub.add_parser("run", help="跑一轮评测并出报告", parents=[common])
     p_run.add_argument("-a", "--adapter", default="mock", help="适配器名（默认 mock）")
     p_run.add_argument("-c", "--cases", default="cases/full", help="用例目录")
     p_run.add_argument("-o", "--out", default="runs", help="输出根目录")
@@ -336,28 +415,52 @@ def main() -> None:
                        help="判卷方式（dual=LLM 判卷[单判或双判，按 JUDGE_B 是否配置]）")
     p_run.set_defaults(func=cmd_run)
 
-    p_rep = sub.add_parser("report", help="出报告（缺 verdicts 时从证据重放评分）")
+    p_rep = sub.add_parser("report", help="出报告（缺 verdicts 时从证据重放评分）",
+                           parents=[common])
     p_rep.add_argument("run_dir", help="runs/ 下的 run 目录")
     p_rep.add_argument("--judge", choices=["scripted", "dual"], default="scripted",
                        help="重放评分时的判卷方式")
     p_rep.set_defaults(func=cmd_report)
 
-    p_cmp = sub.add_parser("compare", help="对比两次运行：对比雷达 + 判定翻转明细")
+    p_cmp = sub.add_parser("compare", help="对比两次运行：对比雷达 + 判定翻转明细",
+                           parents=[common])
     p_cmp.add_argument("run_a", help="运行 A（runs/<run_id> 或完整路径）")
     p_cmp.add_argument("run_b", help="运行 B")
     p_cmp.add_argument("-o", "--out", default="runs/_compare", help="输出目录")
     p_cmp.set_defaults(func=cmd_compare)
 
-    p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）")
+    p_agg = sub.add_parser("aggregate", help="N 轮重跑聚合成 mean±std（方差口径）",
+                           parents=[common])
+    p_agg.add_argument("runs", nargs="+", help="N 个运行（runs/<run_id> 或完整路径）")
+    p_agg.add_argument("-o", "--out", default="runs/_aggregate", help="输出目录")
+    p_agg.set_defaults(func=cmd_aggregate)
+
+    p_sys = sub.add_parser("systest", help="系统级测试：重启/拨钟/多用户/断网（真机真做）",
+                           parents=[common])
     p_sys.add_argument("-a", "--adapter", default="hermes", help="VM 内适配器")
     p_sys.add_argument("-o", "--out", default="runs", help="输出根目录")
     p_sys.set_defaults(func=cmd_systest)
 
-    p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境")
+    p_doc = sub.add_parser("doctor", help="一键发现本机/评测机智能体，体检评测环境",
+                           parents=[common])
     p_doc.add_argument("--no-vm", action="store_true", help="跳过评测机 SSH 扫描")
     p_doc.set_defaults(func=cmd_doctor)
 
-    p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）")
+    p_gw = sub.add_parser("gateway", help="统一模型网关（被测智能体流量必经代理）",
+                          parents=[common])
+    p_gw.add_argument("--host", default="127.0.0.1",
+                      help="监听地址（VM 智能体要用时指 0.0.0.0）")
+    p_gw.add_argument("--port", type=int, default=0, help="端口（默认 8311）")
+    p_gw.add_argument("--upstream", default="", help="上游 base_url（默认 GATEWAY_UPSTREAM_URL）")
+    p_gw.add_argument("--model", default="", help="统一模型名（默认 GATEWAY_MODEL）")
+    p_gw.add_argument("--key", default="",
+                      help="上游 API key（默认 GATEWAY_UPSTREAM_KEY；命令行会进 ps，优先用环境变量）")
+    p_gw.add_argument("--log", default="", help="记账 JSONL 路径（默认 ~/.memhall/gateway-usage.jsonl）")
+    p_gw.add_argument("--report", action="store_true", help="不启服务，打印现有记账聚合")
+    p_gw.set_defaults(func=cmd_gateway)
+
+    p_ui = sub.add_parser("ui", help="启动 Web UI（本地服务 + 自动开浏览器）",
+                          parents=[common])
     p_ui.add_argument("--port", type=int, default=8300, help="端口（默认 8300）")
     p_ui.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
     p_ui.add_argument("--window", action="store_true",
@@ -365,4 +468,7 @@ def main() -> None:
     p_ui.set_defaults(func=cmd_ui)
 
     args = parser.parse_args()
+    setup_logging(verbose=getattr(args, "verbose", False))
+    for env_file in load_dotenv():
+        log.info("已加载配置: %s", env_file)
     raise SystemExit(args.func(args))

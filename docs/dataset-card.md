@@ -1,18 +1,19 @@
 # 数据集说明卡（Dataset Card）· MemHall 用例库 v0.1
 
-> owner：B · 更新：2026-09-28（W2 合并后）
+> owner：B · 更新：2026-10-04（评分口径 v2 + 大容量注入题）
 > 说明卡随题库发布，数据设计的每个主张都能在此对账（design.md §4.6）。
-> 本版为 feat/cases-w2-merge 合入状态：**保留团队已审计的 14 道种子（persist/recall/update/discriminate/boundary/reuse 的 001/002 + temporal-001/002 原样），新增 B 的 29 道补充题（编号 003 起顺延）**，全部 lint 通过、36/36 无空格。
+> **2026-10-04 口径 v2**（docs/review-tasks.md）：探测点分 score/diagnostic 两层——存储态断言（memory.*）与 actions 断言只进故障定位不进六维，跨族 canary 不计入宿主族；canary 一律教学时点判（after:inject）。旧 run 可用 `memhall report` 按新口径重渲染（快照优先，role 按断言推断对旧快照同样适用）。
 
 ## 1. 数据集构成
 
 | 项 | 值 |
 |---|---|
-| 种子用例（人工） | **43 道**（cases/full/），覆盖 6 能力 × 6 内容 = 36 格覆盖矩阵，无空格（lint 实测） |
+| 种子用例（人工） | **45 道**（cases/full/），覆盖 6 能力 × 6 内容 = 36 格覆盖矩阵，无空格（lint 实测）；含 2 道大容量注入题（persist-008 / recall-008：一次教 16 条互不相关事实再考 5 条，检索竞争） |
 | 团队生成用例（模板扩量） | **21 道**（cases/gen/，scripts/gen_cases.py，seed=20260928） |
-| 任务链 | **3 条**（cases/chains/chain-001~003，每条 3 会话） |
-| 冒烟集 | **6 道**（cases/quick/），六能力各 1 道代表题，适配器接入验收口径（取自合并后 full，与 full 一致） |
-| 防背题池（B 本地备用） | 72 道（cases/pool/，seed=42 可复现，B 的 generators/generate_cases.py），与 gen 功能重叠，未并入 PR，可作防背题/扩量素材 |
+| 任务链 | **4 条**（cases/chains/chain-001~003 每条 3 会话；chain-004 六会话长弧，对齐 LongMemEval/LoCoMo 的长程会话深度） |
+| 冒烟集 | **6 道**（虚拟集，无独立目录：full 中六能力各 1 题按 ID 引用，`paths.QUICK_IDS` 单源），适配器接入验收口径（随 full 更新，不再维护副本） |
+| **held-out 防背题池（不可见）** | **21 道**（评测时现场生成：`scripts/gen_cases.py --seed 4210 --out cases/heldout --prefix h`，题目文本不入公开仓库；公布 seed 保复现。智能体跑完公开集后换 held-out 复测，验证非背题） |
+| 生成器备用池（B 本地） | 72 道（seed=42，B 的 generators/generate_cases.py），与 gen/heldout 功能重叠，未并入 PR |
 
 ## 2. 覆盖矩阵（cases/full/ 实测，lint 自动统计，43 道）
 
@@ -67,7 +68,13 @@ reuse           |     1      |  1   |    1     |  1   |       1       |    1
 ## 8. 已知局限（诚实边界）
 
 - 语言：仅中文；场景：桌面办公/开发场景，未覆盖多语言与专业领域
-- 生成扩量以团队 scripts/gen_cases.py + cases/gen 为准；B 的 generators/generate_cases.py（pool，seed=42）为防背题备用，未并入 PR
-- 任务链的"步数/耗时对比"（记忆效率指标）需 runner 支持，probe 侧已预留 actions 计数断言
+- **recall/persist 的机制边界**：真智能体适配器每条消息独立进程（无会话上下文），"会话内提问"实测等价于"写库后立刻检索"；两维按可测口径收窄（recall=写后即取、persist=跨干扰保持，见 design §4.2 注记），接真会话型适配器后语义恢复
+- **held-out 威胁模型**：seed 公开 + 生成器公开 = 题目可完整重构——防训练污染有效、防定向作弊无效；held-out 与 gen 同模板同槽位池，防"背题库"不防"背题型"。后续方向：held-out 加 paraphrase 变换 + 换槽位词表
+- **verdict_map 键名词表未统一**（lint advisory 统计）：correct 类现有 33 种写法——judge 只做分类不受影响，但锚例/诱饵维护成本随词表膨胀；新题按契约 02 §6 标准词表（mixed_up/dont_know/made_up/leaked…）出
+- 生成扩量以团队 scripts/gen_cases.py 为准（gen=公开集 seed=20260928，heldout=不可见集 seed=4210，`--prefix h` 隔离 ID）；B 的 generators/generate_cases.py（pool，seed=42）为备用素材，未并入 PR
+- **三难度旋钮**（design §4.4，2026-10-02 参数化）：`--distract N` 干扰密度（confound 闲聊条数）、`--gap-days N` 拨钟间隔天数、`--similar high|mid|low` 诱饵相似度；同 seed 改旋钮 = 仅难度不同的对照变体；默认参数与历史存档逐字一致（核心闲聊池 5 条不动，扩展池仅在 N≥2 时并入）
+- **方差口径**：正式全量跑每智能体 ≥2 轮，报告六维与总分的 mean±std（样本标准差，`memhall aggregate`）+ 逐探测点 bootstrap 95% CI；n=2 时 mean±std 支撑不了排名叙事，跨智能体比较看 CI 重叠与 compare 的符号检验 p 值，单轮裸分数不作对外口径
+- **mock 基线（口径 v2，2026-10-04 实测）**：full 66.1%（62/66 计分探测有效）、chains 22.2%；口径 v1 分别为 62.2%/41.7%——差异来自诊断探测出分母与 canary 教学时点判，属口径变更非行为变更
+- 任务链的"步数/耗时对比"（记忆效率指标）需 runner 支持，probe 侧已预留 actions 计数断言（actions 证据面 coverage=full 前 role=diagnostic 不进分）
 - 难度标定数据量有限，结论标注"初步标定"
 - 待统一项：update-001 的旧值判定（confusion vs wrong_reuse），由 C/A 裁决后收敛

@@ -6,30 +6,37 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import logging
+import platform
 import subprocess
-from datetime import datetime, timezone
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from memhall.adapters.base import AgentAdapter
-from memhall.adapters.base import AdapterError, NO_WINDOW
+import yaml
+
+from memhall import __version__
+from memhall.adapters.base import NO_WINDOW, AdapterError, AgentAdapter
+from memhall.cost import summarize, usage_delta, usage_snapshot
 from memhall.schema.evidence import (
-    ActionDump,
     Evidence,
     EvidencePhase,
     EvidenceType,
     FsDiff,
     FsDiffEntry,
-    MemorySnapshot,
     Reply,
 )
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.rules import EvidenceStore
 
+log = logging.getLogger(__name__)
+
 
 def _utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _sha256(payload: dict) -> str:
@@ -71,7 +78,17 @@ class CaseRunner:
         self.store.add(ev)
 
     def run(self) -> EvidenceStore:
+        # 用例快照先行：run 目录自包含，report/换机重渲染不依赖源码树用例库
+        # （heldout 题目文本不入仓库，快照是它唯一的持久载体）
+        self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        (self.evidence_dir / "case.yaml").write_text(
+            yaml.safe_dump(self.case.model_dump(mode="json"),
+                           allow_unicode=True, sort_keys=False),
+            encoding="utf-8")
         self.adapter.reset()
+        # R02/R23：reset 彻底性防线——残留记忆会把上一个 case 的答案带进来
+        # （同问异答题库里是定向毒药），宁可本 case 中止也不静默污染
+        self.adapter.verify_reset()
         base_fs = self.adapter.fs_snapshot()
         session_id = "s-01"
         try:
@@ -83,14 +100,22 @@ class CaseRunner:
                     except AdapterError as e:
                         # 拨钟不支持（如 Windows 本机适配器）→ 本 case 运行无效，
                         # 不能让一个 case 的环境限制打崩整套
+                        log.warning("%s 拨钟不支持（case 运行无效）: %s",
+                                    self.case.case_id, e)
                         self._runtime_error = str(e)
                         break
+                    log.info("%s 拨钟 %+d 天（累计 %+d）", self.case.case_id,
+                             se.clock_shift_days, self.clock_offset + se.clock_shift_days)
                     self.clock_offset += se.clock_shift_days
                 messages: list[str] = []
                 replies: list[Reply] = []
                 for step in phase.steps:
                     text = step.user if step.user is not None else step.task
-                    assert text is not None
+                    if text is None:
+                        raise ValueError(f"用例 {self.case.case_id} 阶段 {phase.name} "
+                                         "存在既无 user 也无 task 的步骤")
+                    log.debug("%s 阶段 %s 问: %s", self.case.case_id, phase.name,
+                              text[:60])
                     messages.append(text)
                     _safe_emit(self.on_event, {"type": "ask",
                                                "case": self.case.case_id,
@@ -105,6 +130,8 @@ class CaseRunner:
                                                    "ms": reply.latency_ms})
                     except AdapterError as e:
                         # 契约 01：适配器不可用 -> 后续步骤无意义，case 标运行无效
+                        log.error("%s 阶段 %s 适配器错误: %s", self.case.case_id,
+                                  phase.name, e)
                         replies.append(Reply(
                             session_id=session_id,
                             text=f"[RUNTIME_ERROR] {e}",
@@ -114,11 +141,13 @@ class CaseRunner:
                                                    "case": self.case.case_id,
                                                    "msg": str(e)})
                         break
-                if getattr(self, "_runtime_error", None):
-                    break
+                # 部分对话也落盘：[RUNTIME_ERROR] 回复标记进证据，判卷层据此
+                # 标 INVALID_RUN——适配器中途挂掉不能静默降级成 omission
                 self._collect(phase.name, EvidenceType.DIALOGUE,
                               {"messages": messages,
                                "replies": [r.model_dump(mode="json") for r in replies]})
+                if getattr(self, "_runtime_error", None):
+                    break
                 # inject 后加采记忆快照（写入时机测试的数据源）
                 if phase.name == "inject":
                     snap = self.adapter.dump_memory()
@@ -154,13 +183,14 @@ class CaseRunner:
                              after_snapshot=f"n={len(after_fs)}")
             self._collect("probe", EvidenceType.FS_DIFF, fs_diff.model_dump(mode="json"))
         self._flush()
+        log.debug("%s 证据落盘 %d 条", self.case.case_id, len(self.store.items()))
         return self.store
 
     def _flush(self) -> None:
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
         path = self.evidence_dir / "evidence.jsonl"
         with path.open("a", encoding="utf-8") as f:
-            for ev in self.store._items:
+            for ev in self.store.items():
                 f.write(ev.model_dump_json() + "\n")
 
 
@@ -179,14 +209,12 @@ def _safe_emit(on_event, payload: dict) -> None:
     """事件流给 UI 看过程用——它坏掉不能打崩评测。"""
     if on_event is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         on_event(payload)
-    except Exception:
-        pass
 
 
 def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
-              adapter_name: str,
+              adapter_name: str, case_source: str = "",
               on_case_done=None, on_event=None) -> tuple[str, list[EvidenceStore]]:
     """跑整套用例，落盘 manifest，返回 (run_id, 每 case 的证据视图)。
 
@@ -196,28 +224,89 @@ def run_suite(adapter: AgentAdapter, cases: list[MemoryCase], out_dir: Path,
         供 UI 直播问答过程；回调异常被吞，不影响评测。
     """
     run_id = _utc().strftime("%Y%m%d-%H%M%S") + f"-{adapter_name}"
-    run_dir = out_dir / run_id
+    # 快机同秒跑两轮（mock 单轮 2 秒级）会互相覆盖，冲突时加序号后缀
+    base_dir = out_dir / run_id
+    run_dir, k = base_dir, 2
+    while run_dir.exists():
+        run_dir = out_dir / f"{run_id}-{k}"
+        k += 1
+    run_id = run_dir.name
+    log.info("评测开始: %s × %d 用例 × %d 探测点 → %s", adapter_name, len(cases),
+             sum(len(c.probes) for c in cases), run_dir)
     stores: list[EvidenceStore] = []
-    for i, case in enumerate(cases):
-        _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
-                              "i": i + 1, "n": len(cases)})
-        runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
-                            on_event=on_event)
-        stores.append(runner.run())
-        if on_case_done is not None:
-            on_case_done(case.case_id, i + 1, len(cases))
+    failed: list[str] = []
+    usage_before = usage_snapshot()
+    try:
+        for i, case in enumerate(cases):
+            log.info("[%d/%d] %s 开跑", i + 1, len(cases), case.case_id)
+            t0 = time.monotonic()
+            _safe_emit(on_event, {"type": "case_start", "case": case.case_id,
+                                  "i": i + 1, "n": len(cases)})
+            runner = CaseRunner(adapter, case, run_id, run_dir / "cases" / case.case_id,
+                                on_event=on_event)
+            # R23：单 case 未预期异常不再引爆整套马拉松——记录失败续跑，
+            # 已完成用例的证据/manifest 照常落盘（40 题挂 1 题不报废整轮）
+            try:
+                stores.append(runner.run())
+            except Exception:  # noqa: BLE001 隔离层必须兜住一切
+                log.exception("[%d/%d] %s 异常中止（记入 failed_cases，续跑）",
+                              i + 1, len(cases), case.case_id)
+                failed.append(case.case_id)
+                continue
+            log.info("[%d/%d] %s 完成（%.1fs）", i + 1, len(cases), case.case_id,
+                     time.monotonic() - t0)
+            if on_case_done is not None:
+                on_case_done(case.case_id, i + 1, len(cases))
+    finally:
+        _write_manifest(run_dir, run_id, adapter_name, case_source, cases,
+                        failed, usage_before, adapter)
+    log.info("评测完成: run_id=%s", run_id)
+    return run_id, stores
+
+
+def pair_stores(cases: list[MemoryCase],
+                stores: list[EvidenceStore]) -> list[tuple[MemoryCase, EvidenceStore]]:
+    """stores 与 cases 按证据内 case_id 配对（failed_cases 无 store，跳过）。"""
+    by_id: dict[str, EvidenceStore] = {}
+    for s in stores:
+        items = s.items()
+        if items:
+            by_id.setdefault(items[0].case_id, s)
+    return [(c, st) for c in cases if (st := by_id.get(c.case_id)) is not None]
+
+
+def _write_manifest(run_dir: Path, run_id: str, adapter_name: str,
+                    case_source: str, cases: list[MemoryCase], failed: list[str],
+                    usage_before, adapter: AgentAdapter) -> None:
     manifest = {
         "run_id": run_id,
         "tool": "memhall",
+        "tool_version": __version__,
+        "python": platform.python_version(),
         "schema_version": "0.1",
         "adapter": adapter_name,
+        "case_source": case_source,
         "git_hash": _git_hash(),
         "started_at": run_id[:15],
         "finished_at": _utc().isoformat(),
         "cases": [c.case_id for c in cases],
         "n_probes_total": sum(len(c.probes) for c in cases),
     }
+    if failed:
+        manifest["failed_cases"] = failed
+    # 网关记账差值（直连模式/无记账文件时为 None，不落键）
+    token_usage = summarize(usage_delta(usage_before, usage_snapshot()))
+    if token_usage:
+        manifest["token_usage"] = token_usage
+        log.info("本轮网关记账: %d 请求 / %d tokens",
+                 token_usage["requests"], token_usage["total_tokens"])
+    # 被测智能体版本（报告可复现性元数据；探测失败静默跳过）
+    try:
+        version = adapter.version_info()
+    except Exception:  # noqa: BLE001 元数据探测不阻塞评测
+        version = None
+    if version:
+        manifest["agent_version"] = version
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return run_id, stores
