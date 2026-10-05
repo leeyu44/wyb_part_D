@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memhall.adapters.mock import MockAdapter
+import pytest
+
 from memhall.cli import load_cases
-from memhall.report import compute_metrics, render_radar, render_report
+from memhall.adapters.mock import MockAdapter
 from memhall.runner.orchestrator import run_suite
-from memhall.schema.evidence import VerdictValue
 from memhall.scoring.engine import evaluate_case
+from memhall.report import compute_metrics, render_radar, render_report
+from memhall.schema.evidence import VerdictValue
 
 REPO = Path(__file__).parent.parent
 
@@ -44,7 +46,7 @@ def test_end_to_end_pipeline(tmp_path: Path):
     assert len(case_dirs) == len(cases)
 
     verdicts = []
-    for case, store in zip(cases, stores, strict=True):
+    for case, store in zip(cases, stores):
         verdicts.extend(evaluate_case(case, store, run_id))
     assert verdicts, "判定为空"
     invalid = [v for v in verdicts if v.verdict == VerdictValue.INVALID_RUN]

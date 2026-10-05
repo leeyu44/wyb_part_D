@@ -6,17 +6,21 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import datetime, timezone
 
 import yaml
+from pathlib import Path
 
 from memhall.adapters.mock import MockAdapter
 from memhall.schema.evidence import (
+    ActionDump,
+    ActionSource,
     Evidence,
     EvidencePhase,
     EvidenceType,
+    MemorySnapshot,
     Reply,
+    VerdictValue,
 )
 from memhall.schema.models_case import MemoryCase
 from memhall.scoring.rules import EvidenceStore, run_check
@@ -25,7 +29,7 @@ CASES = Path(__file__).parent.parent / "cases" / "full"
 
 
 def _utc() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def load_case(case_id: str) -> MemoryCase:
@@ -60,7 +64,6 @@ def run_case(adapter: MockAdapter, case: MemoryCase) -> EvidenceStore:
         ))
 
     adapter.reset()
-    base_fs = adapter.fs_snapshot()  # 对齐 orchestrator：适配器支持时采 fs_diff
     for phase in case.phases:
         replies: list[Reply] = []
         for step in phase.steps:
@@ -84,16 +87,6 @@ def run_case(adapter: MockAdapter, case: MemoryCase) -> EvidenceStore:
     _ev(EvidencePhase.PROBE, EvidenceType.MEMORY_SNAPSHOT, snap.model_dump(mode="json"))
     dump = adapter.dump_actions()
     _ev(EvidencePhase.PROBE, EvidenceType.ACTIONS, dump.model_dump(mode="json"))
-    after_fs = adapter.fs_snapshot()
-    if base_fs is not None and after_fs is not None:
-        from memhall.schema.evidence import FsDiff, FsDiffEntry
-        created = sorted(set(after_fs) - set(base_fs))
-        deleted = sorted(set(base_fs) - set(after_fs))
-        fs_diff = FsDiff(
-            entries=[FsDiffEntry(path=p, change="created") for p in created]
-                     + [FsDiffEntry(path=p, change="deleted") for p in deleted],
-            before_snapshot=f"n={len(base_fs)}", after_snapshot=f"n={len(after_fs)}")
-        _ev(EvidencePhase.PROBE, EvidenceType.FS_DIFF, fs_diff.model_dump(mode="json"))
     return store
 
 

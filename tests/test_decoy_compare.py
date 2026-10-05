@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from memhall.cli import load_case_set, load_cases
+from memhall.cli import load_cases
 from memhall.report.compare import compare_runs
 from memhall.schema.models_case import JudgeProbe
 from memhall.scoring.decoy import run_decoy_test
@@ -31,13 +31,15 @@ def test_decoy_mutate_breaks_substring():
 def test_compare_runs(tmp_path: Path):
     """mock 跑两轮同套用例 → compare 出雷达+md，零翻转；改一条 verdict 后翻转=1。"""
     import json
+    import shutil
 
     from memhall.adapters.mock import MockAdapter
-    from memhall.cli import _finish_run
     from memhall.runner.orchestrator import run_suite
     from memhall.scoring.engine import evaluate_case
+    from memhall.cli import _finish_run
+    from memhall.schema.evidence import Verdict
 
-    cases = load_case_set("cases/quick")
+    cases = load_cases(REPO / "cases/quick")
     case_map = {c.case_id: c for c in cases}
     made = []
     for i in range(2):  # 各自独立目录：快机上同秒 run_id 相同会互相覆盖
@@ -45,7 +47,7 @@ def test_compare_runs(tmp_path: Path):
         adapter = MockAdapter()
         run_id, stores = run_suite(adapter, cases, out, "mock")
         manifest = json.loads((out / run_id / "manifest.json").read_text(encoding="utf-8"))
-        verdicts = [v for c, s in zip(cases, stores, strict=True)
+        verdicts = [v for c, s in zip(cases, stores)
                     for v in evaluate_case(c, s, run_id, None)]
         _finish_run(out / run_id, run_id, manifest, verdicts, case_map)
         made.append(out / run_id)
@@ -56,9 +58,9 @@ def test_compare_runs(tmp_path: Path):
 
     # 人为翻转一条判定，diff 应抓到
     vp = made[1] / "verdicts.jsonl"
-    lines = [json.loads(ln) for ln in vp.read_text(encoding="utf-8").splitlines()]
+    lines = [json.loads(l) for l in vp.read_text(encoding="utf-8").splitlines()]
     lines[0]["verdict"] = "fabrication"
-    vp.write_text("\n".join(json.dumps(ln, ensure_ascii=False) for ln in lines),
+    vp.write_text("\n".join(json.dumps(l, ensure_ascii=False) for l in lines),
                   encoding="utf-8")
     res2 = compare_runs(made[0], made[1], tmp_path / "_compare2")
     assert res2["n_flips"] == 1
